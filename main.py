@@ -63,6 +63,37 @@ import io
 from pydantic import BaseModel
 import json
 
+# Import additional libraries for document processing
+import fitz  # PyMuPDF for PDF processing
+from PIL import Image
+import io
+
+# Document processing functions
+def extract_text_from_pdf(pdf_bytes):
+    """Extract text from a PDF file using PyMuPDF."""
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        doc.close()
+        return text
+    except Exception as e:
+        print(f"Error processing PDF: {str(e)}")
+        return None
+
+
+def extract_text_from_image(image_bytes):
+    """Extract text from an image file using pytesseract OCR."""
+    try:
+        import pytesseract
+        image = Image.open(io.BytesIO(image_bytes))
+        text = pytesseract.image_to_string(image)
+        return text
+    except Exception as e:
+        print(f"Error processing image: {str(e)}")
+        return None
+
 MODEL_MAP = {
     "OpenAI": ["text-davinci-003", "text-curie-001", "text-babbage-001", "text-ada-001"],
     "Anthropic": ["anthropic-cassius-001", "anthropic-cassius-002"],
@@ -90,14 +121,27 @@ PROVIDER_TO_ENV_VAR_KEY = {
 def validate_openai_key(api_key):
     """Validate OpenAI API key by making a minimal API call"""
     try:
+        # First check if the API key is empty
+        if not api_key:
+            return False, "API key is empty"
+            
         client = OpenAIClient(
-            model="gpt-3.5-turbo",
+            model_name="gpt-3.5-turbo",
             api_key=api_key,
             max_tokens=1
         )
         messages = [{"role": "user", "content": "Say yes"}]
-        client.chat(messages)
-        return True, ""
+        
+        # Catch authentication errors specifically
+        try:
+            client.chat(messages)
+            return True, ""
+        except Exception as e:
+            if "401" in str(e) or "invalid_api_key" in str(e) or "Invalid API key" in str(e):
+                return False, "Invalid API key. Please check your OpenAI API key."
+            else:
+                raise e
+                
     except Exception as e:
         return False, str(e)
 
@@ -105,14 +149,27 @@ def validate_openai_key(api_key):
 def validate_anthropic_key(api_key):
     """Validate Anthropic API key by making a minimal API call"""
     try:
+        # First check if the API key is empty
+        if not api_key:
+            return False, "API key is empty"
+            
         client = AnthropicClient(
-            model="claude-3-haiku-20240307",
+            model_name="claude-3-haiku-20240307",
             api_key=api_key,
             max_tokens=1
         )
         messages = [{"role": "user", "content": "Say yes"}]
-        client.chat(messages)
-        return True, ""
+        
+        # Catch authentication errors specifically
+        try:
+            client.chat(messages)
+            return True, ""
+        except Exception as e:
+            if "401" in str(e) or "invalid_api_key" in str(e) or "Invalid API key" in str(e):
+                return False, "Invalid API key. Please check your Anthropic API key."
+            else:
+                raise e
+                
     except Exception as e:
         return False, str(e)
 
@@ -120,14 +177,27 @@ def validate_anthropic_key(api_key):
 def validate_together_key(api_key):
     """Validate Together API key by making a minimal API call"""
     try:
+        # First check if the API key is empty
+        if not api_key:
+            return False, "API key is empty"
+            
         client = TogetherClient(
-            model="meta-llama/Llama-3.3-70B-Instruct-Turbo",
+            model_name="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
             api_key=api_key,
             max_tokens=1
         )
         messages = [{"role": "user", "content": "Say yes"}]
-        client.chat(messages)
-        return True, ""
+        
+        # Catch authentication errors specifically
+        try:
+            client.chat(messages)
+            return True, ""
+        except Exception as e:
+            if "401" in str(e) or "invalid_api_key" in str(e) or "Invalid API key" in str(e):
+                return False, "Invalid API key. Please check your Together API key."
+            else:
+                raise e
+                
     except Exception as e:
         return False, str(e)
 
@@ -135,14 +205,27 @@ def validate_together_key(api_key):
 def validate_perplexity_key(api_key):
     """Validate Perplexity API key by making a minimal API call"""
     try:
+        # First check if the API key is empty
+        if not api_key:
+            return False, "API key is empty"
+            
         client = PerplexityAIClient(
-            model="sonar-pro", 
+            model_name="sonar-pro", 
             api_key=api_key, 
             max_tokens=1
         )
         messages = [{"role": "user", "content": "Say yes"}]
-        client.chat(messages)
-        return True, ""
+        
+        # Catch authentication errors specifically
+        try:
+            client.chat(messages)
+            return True, ""
+        except Exception as e:
+            if "401" in str(e) or "invalid_api_key" in str(e) or "Invalid API key" in str(e):
+                return False, "Invalid API key. Please check your Perplexity API key."
+            else:
+                raise e
+                
     except Exception as e:
         return False, str(e)
 
@@ -150,14 +233,27 @@ def validate_perplexity_key(api_key):
 def validate_openrouter_key(api_key):
     """Validate OpenRouter API key by making a minimal API call"""
     try:
+        # First check if the API key is empty
+        if not api_key:
+            return False, "API key is empty"
+            
         client = OpenRouterClient(
-            model="anthropic/claude-3-5-sonnet",  # Use a common model for testing
+            model_name="anthropic/claude-3-5-sonnet",  # Use a common model for testing
             api_key=api_key,
             max_tokens=1
         )
         messages = [{"role": "user", "content": "Say yes"}]
-        client.chat(messages)
-        return True, ""
+        
+        # Catch authentication errors specifically
+        try:
+            client.chat(messages)
+            return True, ""
+        except Exception as e:
+            if "401" in str(e) or "invalid_api_key" in str(e) or "Invalid API key" in str(e):
+                return False, "Invalid API key. Please check your OpenRouter API key."
+            else:
+                raise e
+                
     except Exception as e:
         return False, str(e)
 
@@ -212,82 +308,93 @@ class MinionsApp(Gtk.Application):
     def initialize_clients(self, local_model_name, remote_model_name, provider, protocol,
                           local_max_tokens, remote_max_tokens, api_key, num_ctx=4096, mcp_server_name=None):
         """Initialize the local and remote clients for the Minions protocol."""
-        print("Initializing clients...")
-        
         try:
-            # Initialize local client (Ollama)
-            self.local_client = OllamaClient(
-                model_name=local_model_name,
-                temperature=self.local_temperature,
-                max_tokens=int(local_max_tokens),
-                num_ctx=num_ctx
-            )
-            print(f"Local client initialized with model: {local_model_name}")
+            # Always initialize local client if possible
+            try:
+                self.local_client = OllamaClient(
+                    model_name=local_model_name,
+                    temperature=float(self.local_temperature),
+                    max_tokens=int(local_max_tokens),
+                    num_ctx=int(num_ctx)
+                )
+                print(f"Initialized local client with model {local_model_name}")
+            except Exception as e:
+                print(f"Warning: Could not initialize local client: {str(e)}")
+                self.local_client = None
             
             # Initialize remote client based on provider
-            if provider == "OpenAI":
-                self.remote_client = OpenAIClient(
-                    model=remote_model_name,
-                    api_key=api_key,
-                    max_tokens=int(remote_max_tokens),
-                    num_ctx=num_ctx,
-                )
-            elif provider == "Anthropic":
-                self.remote_client = AnthropicClient(
-                    model=remote_model_name,
-                    api_key=api_key,
-                    max_tokens=int(remote_max_tokens)
-                )
-            elif provider == "Together":
-                self.remote_client = TogetherClient(
-                    api_key=api_key,
-                    model=remote_model_name,
-                    max_tokens=int(remote_max_tokens)
-                )
-            elif provider == "Perplexity":
-                self.remote_client = PerplexityAIClient(
-                    model=remote_model_name,
-                    api_key=api_key,
-                    max_tokens=int(remote_max_tokens)
-                )
-            elif provider == "OpenRouter":
-                self.remote_client = OpenRouterClient(
-                    model=remote_model_name,
-                    api_key=api_key,
-                    max_tokens=int(remote_max_tokens)
-                )
-            else:
-                raise ValueError(f"Unsupported provider: {provider}")
-                
-            print(f"Remote client initialized with provider: {provider}, model: {remote_model_name}")
+            self.remote_client = None
+            if api_key:  # Only try to initialize if API key is provided
+                try:
+                    if provider == "OpenAI":
+                        self.remote_client = OpenAIClient(
+                            model_name=remote_model_name,
+                            api_key=api_key,
+                            max_tokens=int(remote_max_tokens),
+                            num_ctx=num_ctx,
+                        )
+                    elif provider == "Anthropic":
+                        self.remote_client = AnthropicClient(
+                            model_name=remote_model_name,
+                            api_key=api_key,
+                            max_tokens=int(remote_max_tokens)
+                        )
+                    elif provider == "Together":
+                        self.remote_client = TogetherClient(
+                            model_name=remote_model_name,
+                            api_key=api_key,
+                            max_tokens=int(remote_max_tokens)
+                        )
+                    elif provider == "Perplexity":
+                        self.remote_client = PerplexityAIClient(
+                            model_name=remote_model_name,
+                            api_key=api_key,
+                            max_tokens=int(remote_max_tokens)
+                        )
+                    elif provider == "OpenRouter":
+                        self.remote_client = OpenRouterClient(
+                            model_name=remote_model_name,
+                            api_key=api_key,
+                            max_tokens=int(remote_max_tokens)
+                        )
+                    print(f"Initialized remote client with provider {provider} and model {remote_model_name}")
+                except Exception as e:
+                    print(f"Warning: Could not initialize remote client: {str(e)}")
+                    self.remote_client = None
             
-            # Initialize Minion or Minions based on protocol
+            # Initialize protocol
             if protocol == "Minion":
-                self.minion = Minion(
-                    model_client=self.remote_client,
-                )
-                print("Minion protocol initialized")
-            elif protocol == "Minions":
-                if mcp_server_name:
-                    mcp = SyncMinionsMCP(server_name=mcp_server_name)
+                if self.local_client:
+                    self.minion = Minion(self.local_client)
+                    print("Initialized Minion protocol with local client")
+                    return True, "Initialized Minion protocol with local client"
+                elif self.remote_client:
+                    self.minion = Minion(self.remote_client)
+                    print("Initialized Minion protocol with remote client")
+                    return True, "Initialized Minion protocol with remote client"
                 else:
-                    mcp = None
-                    
-                self.minions = Minions(
-                    local_client=self.local_client,
-                    remote_client=self.remote_client,
-                    mcp=mcp,
-                )
-                print("Minions protocol initialized")
+                    return False, "No clients available for Minion protocol"
+            elif protocol == "Minions":
+                if self.local_client and self.remote_client:
+                    self.minions = Minions(self.local_client, self.remote_client)
+                    print("Initialized Minions protocol with both clients")
+                    return True, "Initialized Minions protocol with both clients"
+                elif self.local_client:
+                    # Fallback to using only local client
+                    self.minions = Minions(self.local_client, self.local_client)
+                    print("Initialized Minions protocol with local client only (fallback)")
+                    return True, "Initialized Minions protocol with local client only (remote client not available)"
+                elif self.remote_client:
+                    # Fallback to using only remote client
+                    self.minions = Minions(self.remote_client, self.remote_client)
+                    print("Initialized Minions protocol with remote client only (fallback)")
+                    return True, "Initialized Minions protocol with remote client only (local client not available)"
+                else:
+                    return False, "No clients available for Minions protocol"
             else:
-                raise ValueError(f"Unsupported protocol: {protocol}")
-                
-            return True, "Clients initialized successfully."
-        
+                return False, f"Unknown protocol: {protocol}"
         except Exception as e:
-            error_msg = f"Error initializing clients: {str(e)}"
-            print(error_msg)
-            return False, error_msg
+            return False, str(e)
 
 class MainWindow(Gtk.ApplicationWindow):
     def __init__(self, *args, **kwargs):
@@ -441,42 +548,9 @@ class MainWindow(Gtk.ApplicationWindow):
         if app.api_key:
             self.api_key_entry.set_text(app.api_key)
             
-            # Validate the API key for the new provider
-            is_valid = False
-            message = ""
-            
-            if provider == "OpenAI":
-                is_valid, message = validate_openai_key(app.api_key)
-            elif provider == "Anthropic":
-                is_valid, message = validate_anthropic_key(app.api_key)
-            elif provider == "Together":
-                is_valid, message = validate_together_key(app.api_key)
-            elif provider == "Perplexity":
-                is_valid, message = validate_perplexity_key(app.api_key)
-            elif provider == "OpenRouter":
-                is_valid, message = validate_openrouter_key(app.api_key)
-            
-            # Show validation result to the user
-            if is_valid:
-                info_dialog = Gtk.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    message_type=Gtk.MessageType.INFO,
-                    buttons=Gtk.ButtonsType.OK,
-                    text="API key is valid. You're good to go!"
-                )
-                info_dialog.run()
-                info_dialog.destroy()
-            else:
-                error_dialog = Gtk.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    message_type=Gtk.MessageType.ERROR,
-                    buttons=Gtk.ButtonsType.OK,
-                    text=f"Invalid API key: {message}"
-                )
-                error_dialog.run()
-                error_dialog.destroy()
+            # Only validate if the user explicitly wants to
+            # We'll skip automatic validation when changing providers to avoid errors
+            # The user can validate manually by changing the API key in the entry field
         else:
             # No API key available, show warning
             warning_dialog = Gtk.MessageDialog(
@@ -492,24 +566,36 @@ class MainWindow(Gtk.ApplicationWindow):
         self.update_models()
         
         # Reinitialize clients with the new provider
-        success, message = app.initialize_clients(
-            local_model_name=app.local_model_name,
-            remote_model_name=app.remote_model_name,
-            provider=provider,
-            protocol=self.protocol,
-            local_max_tokens=app.local_max_tokens,
-            remote_max_tokens=app.remote_max_tokens,
-            api_key=app.api_key,
-            num_ctx=app.num_ctx
-        )
-        
-        if not success:
+        try:
+            success, message = app.initialize_clients(
+                local_model_name=app.local_model_name,
+                remote_model_name=app.remote_model_name,
+                provider=provider,
+                protocol=self.protocol,
+                local_max_tokens=app.local_max_tokens,
+                remote_max_tokens=app.remote_max_tokens,
+                api_key=app.api_key,
+                num_ctx=app.num_ctx
+            )
+            
+            if not success:
+                warning_dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    message_type=Gtk.MessageType.WARNING,
+                    buttons=Gtk.ButtonsType.OK,
+                    text=f"Note: {message}\n\nYou may need to enter a valid API key."
+                )
+                warning_dialog.run()
+                warning_dialog.destroy()
+        except Exception as e:
+            # Handle any exceptions during client initialization
             error_dialog = Gtk.MessageDialog(
                 transient_for=self,
                 modal=True,
                 message_type=Gtk.MessageType.ERROR,
                 buttons=Gtk.ButtonsType.OK,
-                text=f"Failed to initialize clients: {message}"
+                text=f"Error initializing clients: {str(e)}"
             )
             error_dialog.run()
             error_dialog.destroy()
@@ -723,18 +809,34 @@ class MainWindow(Gtk.ApplicationWindow):
                     file_bytes = f.read()
                 
                 # Extract text based on file type
+                text = None
                 if extension == ".pdf":
                     text = extract_text_from_pdf(file_bytes)
-                elif extension in [".jpg", ".jpeg", ".png"]:
+                    if not text:
+                        raise Exception("Failed to extract text from PDF. Make sure PyMuPDF is installed.")
+                elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"]:
                     text = extract_text_from_image(file_bytes)
-                elif extension in [".txt", ".md", ".py", ".js", ".html", ".css", ".json"]:
+                    if not text:
+                        raise Exception("Failed to extract text from image. Make sure pytesseract is installed.")
+                elif extension in [".txt", ".md", ".py", ".js", ".html", ".css", ".json", ".xml", ".csv", ".yml", ".yaml"]:
                     text = file_bytes.decode("utf-8", errors="replace")
+                elif extension in [".docx", ".doc"]:
+                    try:
+                        import docx
+                        from io import BytesIO
+                        doc = docx.Document(BytesIO(file_bytes))
+                        text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+                    except ImportError:
+                        raise Exception("python-docx library is required to process Word documents.")
                 else:
                     # Try to decode as text
                     try:
                         text = file_bytes.decode("utf-8", errors="replace")
                     except:
                         text = f"[Binary file: {file_name}]"
+                
+                if not text or text.strip() == "":
+                    text = f"[Empty or unprocessable file: {file_name}]"
                 
                 # Add to uploaded documents
                 doc_info = {
@@ -746,6 +848,7 @@ class MainWindow(Gtk.ApplicationWindow):
                         "filename": file_name,
                         "filepath": file_path,
                         "filesize": len(file_bytes),
+                        "filetype": extension[1:] if extension else "unknown"
                     }
                 }
                 
@@ -753,12 +856,44 @@ class MainWindow(Gtk.ApplicationWindow):
                 
                 # Update document list
                 row = Gtk.ListBoxRow()
-                hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+                
+                # Add icon based on file type
+                icon_name = "text-x-generic"
+                if extension == ".pdf":
+                    icon_name = "application-pdf"
+                elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp"]:
+                    icon_name = "image-x-generic"
+                elif extension in [".docx", ".doc"]:
+                    icon_name = "x-office-document"
+                
+                icon = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.MENU)
+                hbox.pack_start(icon, False, False, 0)
+                
+                # Add filename
                 label = Gtk.Label(label=file_name)
                 hbox.pack_start(label, True, True, 0)
+                
+                # Add file size
+                size_str = self.format_file_size(len(file_bytes))
+                size_label = Gtk.Label(label=size_str)
+                size_label.set_alignment(1, 0.5)  # Right-align
+                hbox.pack_end(size_label, False, False, 5)
+                
                 row.add(hbox)
                 self.doc_list.add(row)
                 self.doc_list.show_all()
+                
+                # Show success message
+                success_dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    message_type=Gtk.MessageType.INFO,
+                    buttons=Gtk.ButtonsType.OK,
+                    text=f"Successfully processed {file_name}"
+                )
+                success_dialog.run()
+                success_dialog.destroy()
                 
             except Exception as e:
                 error_dialog = Gtk.MessageDialog(
@@ -770,7 +905,18 @@ class MainWindow(Gtk.ApplicationWindow):
                 )
                 error_dialog.run()
                 error_dialog.destroy()
-
+                
+    def format_file_size(self, size_bytes):
+        """Format file size in human-readable format"""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        elif size_bytes < 1024 * 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+        else:
+            return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+                
     def setup_branding(self):
         print("Setting up branding...")
         display = self.get_display()
