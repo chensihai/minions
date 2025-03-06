@@ -12,4 +12,5 @@ Pillow
 st-theme
 mcp
 spacy
+ollama
 # Optionally, add perplexity if needed

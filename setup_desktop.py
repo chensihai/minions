@@ -19,6 +19,7 @@ setup(
         "st-theme",
         "mcp",
         "spacy",
+        "ollama"
     ],
     entry_points={
         "console_scripts": [
