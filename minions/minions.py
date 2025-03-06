@@ -508,6 +508,7 @@ class Minions:
 
             print(f"Sending {len(worker_chats)} worker chats to the worker client")
             worker_response, usage, done_reasons = self.local_client.chat(
+                
                 worker_chats,
             )
             local_usage += usage

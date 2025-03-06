@@ -4,7 +4,21 @@ import ctypes
 import sys
 
 from dotenv import load_dotenv
-load_dotenv()  # Load environment variables from .env file
+load_dotenv(override=True)  # Force reload environment variables from .env file
+
+# Verify API keys are loaded
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
+PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+# Print verification (remove in production)
+print(f"OpenAI API Key loaded: {'Yes' if OPENAI_API_KEY else 'No'}")
+print(f"Anthropic API Key loaded: {'Yes' if ANTHROPIC_API_KEY else 'No'}")
+print(f"Together API Key loaded: {'Yes' if TOGETHER_API_KEY else 'No'}")
+print(f"Perplexity API Key loaded: {'Yes' if PERPLEXITY_API_KEY else 'No'}")
+print(f"OpenRouter API Key loaded: {'Yes' if OPENROUTER_API_KEY else 'No'}")
 
 # Windows-specific configuration
 if os.name == 'nt':
@@ -33,11 +47,14 @@ from minions.minions_mcp import SyncMinionsMCP, MCPConfigManager
 # Import client modules
 from minions.clients.ollama import OllamaClient
 from minions.clients.openai import OpenAIClient
+from desktop.clients.openai_desktop import DesktopOpenAIClient
 from minions.clients.anthropic import AnthropicClient
 from minions.clients.together import TogetherClient
 from minions.clients.perplexity import PerplexityAIClient
 from minions.clients.openrouter import OpenRouterClient
 from desktop.clients.together_desktop import TogetherDesktopClient
+from desktop.clients.ollama_desktop import DesktopOllamaClient
+from desktop.clients.client_adapter import ClientAdapter
 
 # Additional imports
 import time
@@ -88,7 +105,7 @@ class MinionsApp(Gtk.Application):
         # Provider-related settings
         self.providers = ["OpenAI", "Anthropic", "Together", "Perplexity", "OpenRouter"]
         self.current_provider = "OpenAI"
-        self.api_key = ""
+        self.api_key = OPENAI_API_KEY
         
         # Model settings
         self.local_model_name = "ollama:llama2"
@@ -123,11 +140,24 @@ class MinionsApp(Gtk.Application):
         
         try:
             # Initialize local client (always Ollama)
-            self.local_client = OllamaClient(
-                model_name=local_model_name,
-                # api_key=api_key,
-                temperature=local_temperature,
-                max_tokens=int(local_max_tokens),
+            if os.environ.get("MINIONS_DESKTOP_MODE") == "true":
+                local_client = DesktopOllamaClient(
+                    model_name=local_model_name,
+                    # api_key=api_key,
+                    temperature=local_temperature,
+                    max_tokens=int(local_max_tokens),
+                    num_ctx=num_ctx,
+                    structured_output_schema=None,
+                    use_async=False,
+                )
+                # Wrap the desktop client with our adapter
+                self.local_client = ClientAdapter(local_client)
+            else:
+                self.local_client = OllamaClient(
+                    model_name=local_model_name,
+                    # api_key=api_key,
+                    temperature=local_temperature,
+                    max_tokens=int(local_max_tokens),
                 num_ctx=num_ctx,
                 structured_output_schema=None,
                 use_async=False,
@@ -136,12 +166,25 @@ class MinionsApp(Gtk.Application):
             
             # Initialize remote client based on provider
             if provider == "OpenAI":
-                self.remote_client = OpenAIClient(
-                    model=remote_model_name,
-                    api_key=api_key,
-                    temperature=remote_temperature,
-                    max_tokens=remote_max_tokens
-                )
+                if os.environ.get("MINIONS_DESKTOP_MODE") == "true":
+                    remote_client = DesktopOpenAIClient(
+                        model=remote_model_name,
+                        api_key=api_key,
+                        temperature=remote_temperature,
+                        max_tokens=remote_max_tokens,
+                        num_ctx=num_ctx,
+                        structured_output_schema=None,
+                        use_async=False,
+                    )
+                    # Wrap the desktop client with our adapter
+                    self.remote_client = ClientAdapter(remote_client)
+                else:
+                    self.remote_client = OpenAIClient(
+                        model_name=remote_model_name,
+                        api_key=api_key,
+                        temperature=remote_temperature,
+                        max_tokens=remote_max_tokens
+                    )
             elif provider == "Anthropic":
                 self.remote_client = AnthropicClient(
                     model=remote_model_name,
@@ -151,7 +194,9 @@ class MinionsApp(Gtk.Application):
                 )
             elif provider == "Together":
                 if '--desktop' in sys.argv:
-                    self.remote_client = TogetherDesktopClient(api_key=api_key)
+                    together_client = TogetherDesktopClient(api_key=api_key)
+                    # Wrap the desktop client with our adapter
+                    self.remote_client = ClientAdapter(together_client)
                 else:
                     self.remote_client = TogetherClient(
                         model=remote_model_name,
@@ -338,6 +383,26 @@ class MainWindow(Gtk.ApplicationWindow):
         print("Document section created and packed")
 
     def on_provider_changed(self, combo):
+        app = self.props.application
+        provider = combo.get_active_text()
+        app.current_provider = provider
+        
+        # Set API key from environment variable based on selected provider
+        if provider == "OpenAI":
+            app.api_key = OPENAI_API_KEY
+        elif provider == "Anthropic":
+            app.api_key = ANTHROPIC_API_KEY
+        elif provider == "Together":
+            app.api_key = TOGETHER_API_KEY
+        elif provider == "Perplexity":
+            app.api_key = PERPLEXITY_API_KEY
+        elif provider == "OpenRouter":
+            app.api_key = OPENROUTER_API_KEY
+            
+        # Update the API key entry field with the value from environment
+        if app.api_key:
+            self.api_key_entry.set_text(app.api_key)
+            
         self.update_models()
 
     def update_models(self):
@@ -380,7 +445,8 @@ class MainWindow(Gtk.ApplicationWindow):
     def run_protocol(self, task):
         """Run the selected protocol with the given task"""
         app = self.props.application
-        
+        if app.api_key is None:
+            app.api_key = OPENAI_API_KEY
         # Show thinking indicator
         buffer = self.chat_history.get_buffer()
         buffer.insert(buffer.get_end_iter(), "AI: Thinking...\n")
@@ -433,13 +499,21 @@ class MainWindow(Gtk.ApplicationWindow):
                 import threading
                 def run_minions():
                     try:
-                        results = app.minions.run(
+                        # Call the Minions object directly (it's callable)
+                        # The Minions.__call__ method returns a dictionary with multiple values
+                        results_dict, _, _ = app.minions(
                             task=task,
-                            context=context,
-                            message_callback=message_callback
+                            doc_metadata="", # Add empty doc_metadata parameter
+                            context=[context], # Wrap context in a list as expected by Minions
+                            max_rounds=5
                         )
+                        
+                        # Extract the final answer from the results dictionary
+                        final_answer = results_dict.get("final_answer", "No answer found.")
+                        
                         Gdk.threads_enter()
                         buffer.insert(buffer.get_end_iter(), f"Execution complete.\n\n")
+                        buffer.insert(buffer.get_end_iter(), f"Answer: {final_answer}\n\n")
                         Gdk.threads_leave()
                     except Exception as e:
                         Gdk.threads_enter()
