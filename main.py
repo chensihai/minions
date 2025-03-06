@@ -86,6 +86,81 @@ PROVIDER_TO_ENV_VAR_KEY = {
     "Perplexity": "PERPLEXITY_API_KEY",
 }
 
+# API Key validation functions
+def validate_openai_key(api_key):
+    """Validate OpenAI API key by making a minimal API call"""
+    try:
+        client = OpenAIClient(
+            model="gpt-3.5-turbo",
+            api_key=api_key,
+            max_tokens=1
+        )
+        messages = [{"role": "user", "content": "Say yes"}]
+        client.chat(messages)
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def validate_anthropic_key(api_key):
+    """Validate Anthropic API key by making a minimal API call"""
+    try:
+        client = AnthropicClient(
+            model="claude-3-haiku-20240307",
+            api_key=api_key,
+            max_tokens=1
+        )
+        messages = [{"role": "user", "content": "Say yes"}]
+        client.chat(messages)
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def validate_together_key(api_key):
+    """Validate Together API key by making a minimal API call"""
+    try:
+        client = TogetherClient(
+            model="meta-llama/Llama-3.3-70B-Instruct-Turbo",
+            api_key=api_key,
+            max_tokens=1
+        )
+        messages = [{"role": "user", "content": "Say yes"}]
+        client.chat(messages)
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def validate_perplexity_key(api_key):
+    """Validate Perplexity API key by making a minimal API call"""
+    try:
+        client = PerplexityAIClient(
+            model="sonar-pro", 
+            api_key=api_key, 
+            max_tokens=1
+        )
+        messages = [{"role": "user", "content": "Say yes"}]
+        client.chat(messages)
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def validate_openrouter_key(api_key):
+    """Validate OpenRouter API key by making a minimal API call"""
+    try:
+        client = OpenRouterClient(
+            model="anthropic/claude-3-5-sonnet",  # Use a common model for testing
+            api_key=api_key,
+            max_tokens=1
+        )
+        messages = [{"role": "user", "content": "Say yes"}]
+        client.chat(messages)
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
 # For Minions protocol
 class JobOutput(BaseModel):
     answer: str | None
@@ -366,6 +441,54 @@ class MainWindow(Gtk.ApplicationWindow):
         if app.api_key:
             self.api_key_entry.set_text(app.api_key)
             
+            # Validate the API key for the new provider
+            is_valid = False
+            message = ""
+            
+            if provider == "OpenAI":
+                is_valid, message = validate_openai_key(app.api_key)
+            elif provider == "Anthropic":
+                is_valid, message = validate_anthropic_key(app.api_key)
+            elif provider == "Together":
+                is_valid, message = validate_together_key(app.api_key)
+            elif provider == "Perplexity":
+                is_valid, message = validate_perplexity_key(app.api_key)
+            elif provider == "OpenRouter":
+                is_valid, message = validate_openrouter_key(app.api_key)
+            
+            # Show validation result to the user
+            if is_valid:
+                info_dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    message_type=Gtk.MessageType.INFO,
+                    buttons=Gtk.ButtonsType.OK,
+                    text="API key is valid. You're good to go!"
+                )
+                info_dialog.run()
+                info_dialog.destroy()
+            else:
+                error_dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK,
+                    text=f"Invalid API key: {message}"
+                )
+                error_dialog.run()
+                error_dialog.destroy()
+        else:
+            # No API key available, show warning
+            warning_dialog = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.OK,
+                text=f"No API key found for {provider}. Please enter an API key."
+            )
+            warning_dialog.run()
+            warning_dialog.destroy()
+            
         self.update_models()
         
         # Reinitialize clients with the new provider
@@ -400,8 +523,49 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def on_api_key_changed(self, entry):
         """Update API key when entry changes"""
-        self.props.application.api_key = entry.get_text()
+        app = self.props.application
+        api_key = entry.get_text()
+        app.api_key = api_key
         
+        # Validate the API key based on the selected provider
+        provider = app.current_provider
+        is_valid = False
+        message = ""
+        
+        if api_key:
+            if provider == "OpenAI":
+                is_valid, message = validate_openai_key(api_key)
+            elif provider == "Anthropic":
+                is_valid, message = validate_anthropic_key(api_key)
+            elif provider == "Together":
+                is_valid, message = validate_together_key(api_key)
+            elif provider == "Perplexity":
+                is_valid, message = validate_perplexity_key(api_key)
+            elif provider == "OpenRouter":
+                is_valid, message = validate_openrouter_key(api_key)
+            
+            # Show validation result to the user
+            if is_valid:
+                info_dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    message_type=Gtk.MessageType.INFO,
+                    buttons=Gtk.ButtonsType.OK,
+                    text="API key is valid. You're good to go!"
+                )
+                info_dialog.run()
+                info_dialog.destroy()
+            else:
+                error_dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK,
+                    text=f"Invalid API key: {message}"
+                )
+                error_dialog.run()
+                error_dialog.destroy()
+
     def on_protocol_changed(self, combo):
         """Update protocol when selection changes"""
         app = self.props.application
