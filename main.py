@@ -1,8 +1,9 @@
 import gi
 import os
-import ctypes
 import sys
-
+import threading
+import json
+import ctypes
 from dotenv import load_dotenv
 load_dotenv(override=True)  # Force reload environment variables from .env file
 
@@ -61,7 +62,6 @@ from openai import OpenAI
 from PIL import Image
 import io
 from pydantic import BaseModel
-import json
 
 # Import additional libraries for document processing
 import fitz  # PyMuPDF for PDF processing
@@ -268,6 +268,11 @@ class StructuredLocalOutput(BaseModel):
     citation: str | None
     answer: str | None
 
+class StructuredOutputSchema(BaseModel):
+    answer: str
+    explanation: str = None
+    citation: str = None
+
 class MinionsApp(Gtk.Application):
     def __init__(self):
         super().__init__(application_id='com.hazyresearch.minions')
@@ -311,32 +316,15 @@ class MinionsApp(Gtk.Application):
         try:
             # Always initialize local client if possible
             try:
-                # Define structured output schema for Ollama client
-                structured_output_schema = {
-                    "type": "object",
-                    "properties": {
-                        "answer": {
-                            "type": "string",
-                            "description": "The answer to the user's question"
-                        },
-                        "explanation": {
-                            "type": "string",
-                            "description": "An explanation of how the answer was derived"
-                        },
-                        "citation": {
-                            "type": "string",
-                            "description": "Citation or source information for the answer"
-                        }
-                    },
-                    "required": ["answer"]
-                }
+                # Use the Pydantic model for structured output schema
+                structured_output_schema = StructuredOutputSchema if protocol == "Minions" else None
                 
                 self.local_client = OllamaClient(
                     model_name=local_model_name,
                     temperature=float(self.local_temperature),
                     max_tokens=int(local_max_tokens),
                     num_ctx=int(num_ctx),
-                    structured_output_schema=structured_output_schema if protocol == "Minions" else None,
+                    structured_output_schema=structured_output_schema,
                     use_async=False  # Desktop client uses synchronous calls
                 )
                 print(f"Initialized local client with model {local_model_name}")
@@ -741,11 +729,16 @@ class MainWindow(Gtk.ApplicationWindow):
             
             # Desktop-style client initialization
             if not app.local_client:
+                # Define structured output schema for Ollama client
+                structured_output_schema = StructuredOutputSchema if self.protocol == "Minions" else None
+                
                 app.local_client = OllamaClient(
                     model_name=app.local_model_name,
                     temperature=float(app.local_temperature),
                     max_tokens=int(app.local_max_tokens),
-                    num_ctx=int(app.num_ctx)
+                    num_ctx=int(app.num_ctx),
+                    structured_output_schema=structured_output_schema,
+                    use_async=False  # Desktop client uses synchronous calls
                 )
             
             # Prepare document context if available
@@ -1010,6 +1003,11 @@ class MainWindow(Gtk.ApplicationWindow):
         """Add a message to the chat display with proper formatting."""
         # Add to the text buffer first (for backward compatibility)
         buffer = self.chat_history.get_buffer()
+        
+        # Get the current end position before inserting text
+        start_mark = buffer.create_mark(None, buffer.get_end_iter(), True)
+        
+        # Format the message for text buffer display
         if sender == "You":
             buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
         elif sender == "Assistant":
@@ -1021,6 +1019,30 @@ class MainWindow(Gtk.ApplicationWindow):
                 buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
         else:
             buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
+        
+        # Get the end position after inserting text
+        end_iter = buffer.get_end_iter()
+        start_iter = buffer.get_iter_at_mark(start_mark)
+        
+        # Add CSS styling for different message types
+        if sender == "You":
+            tag = buffer.create_tag(None)
+            tag.set_property("foreground", "blue")
+            tag.set_property("weight", 600)
+            buffer.apply_tag(tag, start_iter, end_iter)
+        elif sender == "Assistant":
+            tag = buffer.create_tag(None)
+            tag.set_property("foreground", "green")
+            tag.set_property("weight", 600)
+            buffer.apply_tag(tag, start_iter, end_iter)
+        else:
+            tag = buffer.create_tag(None)
+            tag.set_property("foreground", "red")
+            tag.set_property("weight", 600)
+            buffer.apply_tag(tag, start_iter, end_iter)
+        
+        # Clean up the mark
+        buffer.delete_mark(start_mark)
             
         # Store the message for later reference
         self.chat_messages.append({
@@ -1028,6 +1050,10 @@ class MainWindow(Gtk.ApplicationWindow):
             'message': message,
             'is_thinking': is_thinking
         })
+        
+        # Ensure the chat history scrolls to show the latest message
+        adj = self.chat_history.get_vadjustment()
+        adj.set_value(adj.get_upper() - adj.get_page_size())
 
     def remove_thinking_message(self):
         """Remove the thinking message from the chat."""
@@ -1044,16 +1070,53 @@ class MainWindow(Gtk.ApplicationWindow):
                 
                 # Re-add all non-thinking messages to the buffer
                 for msg in self.chat_messages:
-                    if msg['sender'] == "You":
-                        buffer.insert(buffer.get_end_iter(), f"{msg['sender']}: {msg['message']}\n")
-                    elif msg['sender'] == "Assistant":
-                        if isinstance(msg['message'], (dict, list)):
-                            formatted_message = format_structured_output(msg['message'])
+                    sender = msg['sender']
+                    message = msg['message']
+                    
+                    # Get the current end position before inserting text
+                    start_mark = buffer.create_mark(None, buffer.get_end_iter(), True)
+                    
+                    # Format the message for text buffer display
+                    if sender == "You":
+                        buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
+                    elif sender == "Assistant":
+                        if isinstance(message, (dict, list)):
+                            # Format structured output
+                            formatted_message = format_structured_output(message)
                             buffer.insert(buffer.get_end_iter(), f"AI: {formatted_message}\n\n")
                         else:
-                            buffer.insert(buffer.get_end_iter(), f"AI: {msg['message']}\n\n")
+                            buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
                     else:
-                        buffer.insert(buffer.get_end_iter(), f"{msg['sender']}: {msg['message']}\n")
+                        buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
+                    
+                    # Get the end position after inserting text
+                    end_iter = buffer.get_end_iter()
+                    start_iter = buffer.get_iter_at_mark(start_mark)
+                    
+                    # Add CSS styling for different message types
+                    if sender == "You":
+                        tag = buffer.create_tag(None)
+                        tag.set_property("foreground", "blue")
+                        tag.set_property("weight", 600)
+                        buffer.apply_tag(tag, start_iter, end_iter)
+                    elif sender == "Assistant":
+                        tag = buffer.create_tag(None)
+                        tag.set_property("foreground", "green")
+                        tag.set_property("weight", 600)
+                        buffer.apply_tag(tag, start_iter, end_iter)
+                    else:
+                        tag = buffer.create_tag(None)
+                        tag.set_property("foreground", "red")
+                        tag.set_property("weight", 600)
+                        buffer.apply_tag(tag, start_iter, end_iter)
+                    
+                    # Clean up the mark
+                    buffer.delete_mark(start_mark)
+                
+                # Ensure the chat history scrolls to show the latest message
+                adj = self.chat_history.get_vadjustment()
+                adj.set_value(adj.get_upper() - adj.get_page_size())
+                
                 break
         return False  # Return False to stop the idle_add callback
 
@@ -1092,12 +1155,27 @@ def format_structured_output(output):
             for job in include_jobs:
                 result += f"✅ Job {job.manifest.job_id + 1} (Chunk {job.manifest.chunk_id + 1})\n"
                 result += f"Answer: {job.output.answer}\n\n"
+                if hasattr(job.output, 'explanation') and job.output.explanation:
+                    result += f"Explanation: {job.output.explanation}\n\n"
+                if hasattr(job.output, 'citation') and job.output.citation:
+                    result += f"Citation: {job.output.citation}\n\n"
         
         return result
     
     elif isinstance(output, dict):
+        # Handle structured output from OllamaClient
+        if "answer" in output:
+            result = f"{output['answer']}\n\n"
+            
+            if "explanation" in output and output["explanation"]:
+                result += f"Explanation: {output['explanation']}\n\n"
+                
+            if "citation" in output and output["citation"]:
+                result += f"Citation: {output['citation']}\n\n"
+                
+            return result
         # Try to handle dictionary output (e.g., JSON)
-        if "content" in output and isinstance(output["content"], (dict, str)):
+        elif "content" in output and isinstance(output["content"], (dict, str)):
             try:
                 # Try to parse as JSON if it's a string
                 content = (
