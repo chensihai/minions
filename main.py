@@ -53,7 +53,7 @@ from minions.clients.together import TogetherClient
 from minions.clients.perplexity import PerplexityAIClient
 from minions.clients.openrouter import OpenRouterClient
 from desktop.clients.together_desktop import TogetherDesktopClient
-from desktop.clients.ollama_desktop import DesktopOllamaClient
+
 
 
 # Additional imports
