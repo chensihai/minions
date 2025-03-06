@@ -164,7 +164,11 @@ class MinionsApp(Gtk.Application):
                     max_tokens=int(remote_max_tokens)
                 )
             elif provider == "Together":
-                self.remote_client = TogetherClient(api_key=api_key)
+                self.remote_client = TogetherClient(
+                    api_key=api_key,
+                    model=remote_model_name,
+                    max_tokens=int(remote_max_tokens)
+                )
             elif provider == "Perplexity":
                 self.remote_client = PerplexityAIClient(
                     model=remote_model_name,
@@ -363,6 +367,29 @@ class MainWindow(Gtk.ApplicationWindow):
             self.api_key_entry.set_text(app.api_key)
             
         self.update_models()
+        
+        # Reinitialize clients with the new provider
+        success, message = app.initialize_clients(
+            local_model_name=app.local_model_name,
+            remote_model_name=app.remote_model_name,
+            provider=provider,
+            protocol=self.protocol,
+            local_max_tokens=app.local_max_tokens,
+            remote_max_tokens=app.remote_max_tokens,
+            api_key=app.api_key,
+            num_ctx=app.num_ctx
+        )
+        
+        if not success:
+            error_dialog = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text=f"Failed to initialize clients: {message}"
+            )
+            error_dialog.run()
+            error_dialog.destroy()
 
     def update_models(self):
         self.model_combo.remove_all()
@@ -377,8 +404,33 @@ class MainWindow(Gtk.ApplicationWindow):
         
     def on_protocol_changed(self, combo):
         """Update protocol when selection changes"""
-        self.protocol = combo.get_active_text()
+        app = self.props.application
+        protocol = combo.get_active_text()
+        self.protocol = protocol
         
+        # Initialize clients with the new protocol
+        success, message = app.initialize_clients(
+            local_model_name=app.local_model_name,
+            remote_model_name=app.remote_model_name,
+            provider=app.current_provider,
+            protocol=protocol,
+            local_max_tokens=app.local_max_tokens,
+            remote_max_tokens=app.remote_max_tokens,
+            api_key=app.api_key,
+            num_ctx=app.num_ctx
+        )
+        
+        if not success:
+            error_dialog = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text=f"Failed to initialize protocol: {message}"
+            )
+            error_dialog.run()
+            error_dialog.destroy()
+
     def on_local_model_changed(self, entry):
         """Update local model when entry changes"""
         self.props.application.local_model_name = entry.get_text()
@@ -409,7 +461,6 @@ class MainWindow(Gtk.ApplicationWindow):
             
             # Desktop-style client initialization
             if not app.local_client:
-                from minions.clients.ollama import OllamaClient
                 app.local_client = OllamaClient(
                     model_name=app.local_model_name,
                     temperature=float(app.local_temperature),
@@ -417,20 +468,55 @@ class MainWindow(Gtk.ApplicationWindow):
                     num_ctx=int(app.num_ctx)
                 )
             
+            # Prepare document context if available
+            doc_context = ""
+            doc_metadata = {}
+            for doc in app.uploaded_docs:
+                doc_context += f"\n\n{doc['text']}"
+                doc_metadata[doc['name']] = doc['metadata']
+            
             try:
-                # Web-style execution pattern
-                responses, usage, _ = app.local_client.chat(
-                    messages=[{"role": "user", "content": task}]
-                )
-                
-                if app.remote_client:
-                    remote_responses, remote_usage, _ = app.remote_client.chat(
-                        messages=[{"role": "user", "content": task}]
+                # Use the appropriate protocol
+                if app.minions and app.remote_client:
+                    # Use Minions protocol with both clients
+                    output = app.minions(
+                        task=task,
+                        doc_metadata=doc_metadata,
+                        context=[doc_context] if doc_context else None,
+                        max_rounds=5
                     )
-                    combined = f"LOCAL: {responses[0]}\n\nREMOTE: {remote_responses[0]}"
+                    
                     buffer = self.chat_history.get_buffer()
-                    buffer.insert(buffer.get_end_iter(), f"AI: {combined}\n\n")
+                    if isinstance(output, dict) and 'answer' in output:
+                        buffer.insert(buffer.get_end_iter(), f"AI: {output['answer']}\n\n")
+                    else:
+                        buffer.insert(buffer.get_end_iter(), f"AI: {output}\n\n")
+                
+                # Fallback to direct client usage if protocol not initialized
+                elif app.remote_client:
+                    # Include document context in the prompt
+                    full_prompt = task
+                    if doc_context:
+                        full_prompt = f"Context:\n{doc_context}\n\nQuestion: {task}"
+                    
+                    remote_responses, remote_usage, _ = app.remote_client.chat(
+                        messages=[{"role": "user", "content": full_prompt}]
+                    )
+                    
+                    buffer = self.chat_history.get_buffer()
+                    buffer.insert(buffer.get_end_iter(), f"AI: {remote_responses[0]}\n\n")
+                
+                # Fallback to local client only
                 else:
+                    # Include document context in the prompt
+                    full_prompt = task
+                    if doc_context:
+                        full_prompt = f"Context:\n{doc_context}\n\nQuestion: {task}"
+                    
+                    responses, usage, _ = app.local_client.chat(
+                        messages=[{"role": "user", "content": full_prompt}]
+                    )
+                    
                     buffer = self.chat_history.get_buffer()
                     buffer.insert(buffer.get_end_iter(), f"AI: {responses[0]}\n\n")
                 
