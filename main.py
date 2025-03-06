@@ -47,12 +47,11 @@ from minions.minions_mcp import SyncMinionsMCP, MCPConfigManager
 # Import client modules
 from minions.clients.ollama import OllamaClient
 from minions.clients.openai import OpenAIClient
-from desktop.clients.openai_desktop import DesktopOpenAIClient
 from minions.clients.anthropic import AnthropicClient
-from minions.clients.together import TogetherClient
 from minions.clients.perplexity import PerplexityAIClient
 from minions.clients.openrouter import OpenRouterClient
-from desktop.clients.together_desktop import TogetherDesktopClient
+from minions.clients.together import TogetherClient
+
 
 
 
@@ -152,7 +151,7 @@ class MinionsApp(Gtk.Application):
             
             # Initialize remote client based on provider
             if provider == "OpenAI":
-                self.remote_client = DesktopOpenAIClient(
+                self.remote_client = OpenAIClient(
                     model=remote_model_name,
                     api_key=api_key,
                     max_tokens=int(remote_max_tokens),
@@ -165,7 +164,7 @@ class MinionsApp(Gtk.Application):
                     max_tokens=int(remote_max_tokens)
                 )
             elif provider == "Together":
-                self.remote_client = TogetherDesktopClient(api_key=api_key)
+                self.remote_client = TogetherClient(api_key=api_key)
             elif provider == "Perplexity":
                 self.remote_client = PerplexityAIClient(
                     model=remote_model_name,
