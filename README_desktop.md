@@ -1,0 +1,1 @@
+pyinstaller --onefile --windowed --name "MinionsDesktop" main.py
