@@ -54,7 +54,7 @@ from minions.clients.perplexity import PerplexityAIClient
 from minions.clients.openrouter import OpenRouterClient
 from desktop.clients.together_desktop import TogetherDesktopClient
 from desktop.clients.ollama_desktop import DesktopOllamaClient
-from desktop.clients.client_adapter import ClientAdapter
+
 
 # Additional imports
 import time
@@ -102,13 +102,16 @@ class MinionsApp(Gtk.Application):
     def __init__(self):
         super().__init__(application_id='com.hazyresearch.minions')
         
+        # Initialize context window parameter
+        self.num_ctx = 4096  # Default matching web client
+        
         # Provider-related settings
         self.providers = ["OpenAI", "Anthropic", "Together", "Perplexity", "OpenRouter"]
         self.current_provider = "OpenAI"
         self.api_key = OPENAI_API_KEY
         
         # Model settings
-        self.local_model_name = "ollama:llama2"
+        self.local_model_name = "llama3.2:latest"  # Updated to match local model
         self.remote_model_name = "gpt-4o-mini"
         self.local_temperature = 0.7
         self.local_max_tokens = 1024
@@ -133,90 +136,47 @@ class MinionsApp(Gtk.Application):
         print("Window shown")
         
     def initialize_clients(self, local_model_name, remote_model_name, provider, protocol,
-                          local_temperature, local_max_tokens, remote_temperature, 
-                          remote_max_tokens, api_key, num_ctx=4096, mcp_server_name=None):
+                          local_max_tokens, remote_max_tokens, api_key, num_ctx=4096, mcp_server_name=None):
         """Initialize the local and remote clients for the Minions protocol."""
         print("Initializing clients...")
         
         try:
-            # Initialize local client (always Ollama)
-            if os.environ.get("MINIONS_DESKTOP_MODE") == "true":
-                local_client = DesktopOllamaClient(
-                    model_name=local_model_name,
-                    # api_key=api_key,
-                    temperature=local_temperature,
-                    max_tokens=int(local_max_tokens),
-                    num_ctx=num_ctx,
-                    structured_output_schema=None,
-                    use_async=False,
-                )
-                # Wrap the desktop client with our adapter
-                self.local_client = ClientAdapter(local_client)
-            else:
-                self.local_client = OllamaClient(
-                    model_name=local_model_name,
-                    # api_key=api_key,
-                    temperature=local_temperature,
-                    max_tokens=int(local_max_tokens),
-                num_ctx=num_ctx,
-                structured_output_schema=None,
-                use_async=False,
+            # Initialize local client (Ollama)
+            self.local_client = OllamaClient(
+                model_name=local_model_name,
+                temperature=self.local_temperature,
+                max_tokens=int(local_max_tokens),
+                num_ctx=num_ctx
             )
             print(f"Local client initialized with model: {local_model_name}")
             
             # Initialize remote client based on provider
             if provider == "OpenAI":
-                if os.environ.get("MINIONS_DESKTOP_MODE") == "true":
-                    remote_client = DesktopOpenAIClient(
-                        model=remote_model_name,
-                        api_key=api_key,
-                        temperature=remote_temperature,
-                        max_tokens=remote_max_tokens,
-                        num_ctx=num_ctx,
-                        structured_output_schema=None,
-                        use_async=False,
-                    )
-                    # Wrap the desktop client with our adapter
-                    self.remote_client = ClientAdapter(remote_client)
-                else:
-                    self.remote_client = OpenAIClient(
-                        model_name=remote_model_name,
-                        api_key=api_key,
-                        temperature=remote_temperature,
-                        max_tokens=remote_max_tokens
-                    )
+                self.remote_client = DesktopOpenAIClient(
+                    model=remote_model_name,
+                    api_key=api_key,
+                    max_tokens=int(remote_max_tokens),
+                    num_ctx=num_ctx,
+                )
             elif provider == "Anthropic":
                 self.remote_client = AnthropicClient(
                     model=remote_model_name,
                     api_key=api_key,
-                    temperature=remote_temperature,
-                    max_tokens=remote_max_tokens
+                    max_tokens=int(remote_max_tokens)
                 )
             elif provider == "Together":
-                if '--desktop' in sys.argv:
-                    together_client = TogetherDesktopClient(api_key=api_key)
-                    # Wrap the desktop client with our adapter
-                    self.remote_client = ClientAdapter(together_client)
-                else:
-                    self.remote_client = TogetherClient(
-                        model=remote_model_name,
-                        api_key=api_key,
-                        temperature=remote_temperature,
-                        max_tokens=remote_max_tokens
-                    )
+                self.remote_client = TogetherDesktopClient(api_key=api_key)
             elif provider == "Perplexity":
                 self.remote_client = PerplexityAIClient(
                     model=remote_model_name,
                     api_key=api_key,
-                    temperature=remote_temperature,
-                    max_tokens=remote_max_tokens
+                    max_tokens=int(remote_max_tokens)
                 )
             elif provider == "OpenRouter":
                 self.remote_client = OpenRouterClient(
                     model=remote_model_name,
                     api_key=api_key,
-                    temperature=remote_temperature,
-                    max_tokens=remote_max_tokens
+                    max_tokens=int(remote_max_tokens)
                 )
             else:
                 raise ValueError(f"Unsupported provider: {provider}")
@@ -442,90 +402,52 @@ class MainWindow(Gtk.ApplicationWindow):
         # Execute the appropriate protocol
         self.run_protocol(message)
         
-    def run_protocol(self, task):
+    def run_protocol(self, task, context=None):
         """Run the selected protocol with the given task"""
-        app = self.props.application
-        if app.api_key is None:
-            app.api_key = OPENAI_API_KEY
-        # Show thinking indicator
-        buffer = self.chat_history.get_buffer()
-        buffer.insert(buffer.get_end_iter(), "AI: Thinking...\n")
-        
-        # Validate necessary parameters
-        if not app.api_key:
-            buffer.insert(buffer.get_end_iter(), "Error: API key is required.\n\n")
-            return
+        import threading
+        def _run():
+            app = self.props.application
             
-        # Make sure clients are initialized
-        if not app.remote_client:
-            success, msg = app.initialize_clients(
-                app.local_model_name,
-                app.remote_model_name,
-                app.current_provider,
-                self.protocol,
-                app.local_temperature,
-                app.local_max_tokens,
-                app.remote_temperature,
-                app.remote_max_tokens,
-                app.api_key
-            )
+            # Desktop-style client initialization
+            if not app.local_client:
+                from minions.clients.ollama import OllamaClient
+                app.local_client = OllamaClient(
+                    model_name=app.local_model_name,
+                    temperature=float(app.local_temperature),
+                    max_tokens=int(app.local_max_tokens),
+                    num_ctx=int(app.num_ctx)
+                )
             
-            if not success:
-                buffer.insert(buffer.get_end_iter(), f"Error initializing clients: {msg}\n\n")
-                return
-        
-        # Extract context from uploaded documents
-        context = ""
-        doc_metadata = {}
-        for i, doc in enumerate(app.uploaded_docs):
-            context += f"Document {i+1}: {doc['text']}\n\n"
-            doc_metadata[f"doc_{i+1}"] = doc['metadata']
-        
-        # Run the appropriate protocol
-        try:
-            if self.protocol == "Minion":
-                result = app.minion.run(task=task, context=context)
-                buffer.insert(buffer.get_end_iter(), f"AI: {result}\n\n")
-            elif self.protocol == "Minions":
-                def message_callback(role, message, is_final=True):
-                    # Only show final messages for now
-                    if is_final:
-                        prefix = "Remote AI: " if role == "supervisor" else "Local AI: "
-                        Gdk.threads_enter()
-                        buffer.insert(buffer.get_end_iter(), f"{prefix}{message}\n")
-                        Gdk.threads_leave()
+            try:
+                # Web-style execution pattern
+                responses, usage, _ = app.local_client.chat(
+                    messages=[{"role": "user", "content": task}]
+                )
                 
-                # Execute asynchronously to keep UI responsive
-                import threading
-                def run_minions():
-                    try:
-                        # Call the Minions object directly (it's callable)
-                        # The Minions.__call__ method returns a dictionary with multiple values
-                        results_dict, _, _ = app.minions(
-                            task=task,
-                            doc_metadata="", # Add empty doc_metadata parameter
-                            context=[context], # Wrap context in a list as expected by Minions
-                            max_rounds=5
-                        )
-                        
-                        # Extract the final answer from the results dictionary
-                        final_answer = results_dict.get("final_answer", "No answer found.")
-                        
-                        Gdk.threads_enter()
-                        buffer.insert(buffer.get_end_iter(), f"Execution complete.\n\n")
-                        buffer.insert(buffer.get_end_iter(), f"Answer: {final_answer}\n\n")
-                        Gdk.threads_leave()
-                    except Exception as e:
-                        Gdk.threads_enter()
-                        buffer.insert(buffer.get_end_iter(), f"Error executing protocol: {str(e)}\n\n")
-                        Gdk.threads_leave()
+                if app.remote_client:
+                    remote_responses, remote_usage, _ = app.remote_client.chat(
+                        messages=[{"role": "user", "content": task}]
+                    )
+                    combined = f"LOCAL: {responses[0]}\n\nREMOTE: {remote_responses[0]}"
+                    buffer = self.chat_history.get_buffer()
+                    buffer.insert(buffer.get_end_iter(), f"AI: {combined}\n\n")
+                else:
+                    buffer = self.chat_history.get_buffer()
+                    buffer.insert(buffer.get_end_iter(), f"AI: {responses[0]}\n\n")
                 
-                threading.Thread(target=run_minions, daemon=True).start()
-            else:
-                buffer.insert(buffer.get_end_iter(), f"Error: Unsupported protocol '{self.protocol}'\n\n")
+            except Exception as e:
+                error_dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK,
+                    text=f"Protocol error: {str(e)}"
+                )
+                error_dialog.run()
+                error_dialog.destroy()
         
-        except Exception as e:
-            buffer.insert(buffer.get_end_iter(), f"Error executing protocol: {str(e)}\n\n")
+        # Desktop-specific thread handling
+        threading.Thread(target=_run, daemon=True).start()
 
     def on_upload_clicked(self, widget):
         dialog = Gtk.FileChooserNative(
@@ -637,10 +559,5 @@ class MainWindow(Gtk.ApplicationWindow):
         return settings.get_property("gtk-application-prefer-dark-theme")
 
 if __name__ == "__main__":
-    if '--desktop' in sys.argv:
-        client = TogetherDesktopClient(api_key=os.getenv('TOGETHER_API_KEY'))
-    else:
-        client = TogetherClient(api_key=os.getenv('TOGETHER_API_KEY'))
-    
     app = MinionsApp()
     app.run(sys.argv)
