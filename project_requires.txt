@@ -1,0 +1,25 @@
+To migrate the `streamlit run app.py` logic to a desktop application approach similar to Meld's, you'll need to use GTK (GIMP Toolkit) and Python. Here's a high-level approach to achieve this:
+
+1. **Use Python-GTK bindings** : Install PyGObject, which provides Python bindings for GTK[1](https://github.com/ohtaman/streamlit-desktop-app).
+2. **Port Streamlit components to GTK widgets** : Convert Streamlit elements to their GTK equivalents. For example:
+
+* Replace `st.title()` with GTK's `Gtk.Label`
+* Convert `st.button()` to `Gtk.Button`
+* Use `Gtk.Entry` for text input fields
+
+1. **Implement application logic** : Rewrite your Streamlit app's logic using GTK's event-driven programming model.
+2. **Create a main window** : Use `Gtk.Window` as the main container for your application.
+3. **Layout your widgets** : Utilize GTK's layout containers like `Gtk.Box` or `Gtk.Grid` to arrange your widgets.
+4. **Handle events** : Connect GTK signals to Python functions to handle user interactions.
+
+Here's a basic example of how your Streamlit app structure might translate to a GTK-based desktop application:
+
+test.py
+
+This approach will create a native desktop application that doesn't rely on a web browser or server, similar to how Meld operates[4](https://blog.cellenza.com/en/software-development/streamlitstlite-from-browser-to-desktop-in-python-using-wasm/). It provides better performance and a more native feel compared to web-based solutions.
+
+Keep in mind that this migration requires significant refactoring of your Streamlit code. You'll need to reimagine your app's structure and interactions in terms of GTK widgets and events rather than Streamlit's declarative style.
+
+For distribution, you can use tools like PyInstaller to create standalone executables of your GTK-based application, making it easy to distribute to end-users without requiring a Python installation[3](https://discuss.streamlit.io/t/streamlit-deployment-as-an-executable-file-exe-for-windows-macos-and-android/6812).
+
+Let's make a new app main.py for the desktop version.
