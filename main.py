@@ -311,11 +311,33 @@ class MinionsApp(Gtk.Application):
         try:
             # Always initialize local client if possible
             try:
+                # Define structured output schema for Ollama client
+                structured_output_schema = {
+                    "type": "object",
+                    "properties": {
+                        "answer": {
+                            "type": "string",
+                            "description": "The answer to the user's question"
+                        },
+                        "explanation": {
+                            "type": "string",
+                            "description": "An explanation of how the answer was derived"
+                        },
+                        "citation": {
+                            "type": "string",
+                            "description": "Citation or source information for the answer"
+                        }
+                    },
+                    "required": ["answer"]
+                }
+                
                 self.local_client = OllamaClient(
                     model_name=local_model_name,
                     temperature=float(self.local_temperature),
                     max_tokens=int(local_max_tokens),
-                    num_ctx=int(num_ctx)
+                    num_ctx=int(num_ctx),
+                    structured_output_schema=structured_output_schema if protocol == "Minions" else None,
+                    use_async=False  # Desktop client uses synchronous calls
                 )
                 print(f"Initialized local client with model {local_model_name}")
             except Exception as e:
@@ -410,6 +432,9 @@ class MainWindow(Gtk.ApplicationWindow):
         # Protocol settings
         self.protocol = "Minions"  # Default to Minions protocol
         self.protocol_options = ["Minion", "Minions"]
+        
+        # Chat message storage
+        self.chat_messages = []
         
         # Initialize components
         self.build_sidebar()
@@ -696,16 +721,21 @@ class MainWindow(Gtk.ApplicationWindow):
         if not message:
             return
         
-        buffer = self.chat_history.get_buffer()
-        buffer.insert(buffer.get_end_iter(), f"You: {message}\n")
+        # Add user message to chat
+        self.add_message_to_chat("You", message)
         self.chat_input.set_text("")
         
         # Execute the appropriate protocol
         self.run_protocol(message)
-        
+
     def run_protocol(self, task, context=None):
         """Run the selected protocol with the given task"""
         import threading
+        from gi.repository import GLib
+        
+        # Add a "thinking" message
+        self.add_message_to_chat("Assistant", "Thinking...", is_thinking=True)
+        
         def _run():
             app = self.props.application
             
@@ -727,7 +757,7 @@ class MainWindow(Gtk.ApplicationWindow):
             
             try:
                 # Use the appropriate protocol
-                if app.minions and app.remote_client:
+                if self.protocol == "Minions" and app.minions and app.remote_client:
                     # Use Minions protocol with both clients
                     output = app.minions(
                         task=task,
@@ -736,11 +766,22 @@ class MainWindow(Gtk.ApplicationWindow):
                         max_rounds=5
                     )
                     
-                    buffer = self.chat_history.get_buffer()
-                    if isinstance(output, dict) and 'answer' in output:
-                        buffer.insert(buffer.get_end_iter(), f"AI: {output['answer']}\n\n")
-                    else:
-                        buffer.insert(buffer.get_end_iter(), f"AI: {output}\n\n")
+                    # Remove the thinking message and add the response
+                    GLib.idle_add(self.remove_thinking_message)
+                    GLib.idle_add(self.add_message_to_chat, "Assistant", output)
+                
+                elif self.protocol == "Minion" and app.minion:
+                    # Use Minion protocol
+                    output = app.minion(
+                        task=task,
+                        doc_metadata=doc_metadata,
+                        context=[doc_context] if doc_context else None,
+                        max_rounds=5
+                    )
+                    
+                    # Remove the thinking message and add the response
+                    GLib.idle_add(self.remove_thinking_message)
+                    GLib.idle_add(self.add_message_to_chat, "Assistant", output)
                 
                 # Fallback to direct client usage if protocol not initialized
                 elif app.remote_client:
@@ -753,8 +794,9 @@ class MainWindow(Gtk.ApplicationWindow):
                         messages=[{"role": "user", "content": full_prompt}]
                     )
                     
-                    buffer = self.chat_history.get_buffer()
-                    buffer.insert(buffer.get_end_iter(), f"AI: {remote_responses[0]}\n\n")
+                    # Remove the thinking message and add the response
+                    GLib.idle_add(self.remove_thinking_message)
+                    GLib.idle_add(self.add_message_to_chat, "Assistant", remote_responses[0])
                 
                 # Fallback to local client only
                 else:
@@ -767,19 +809,30 @@ class MainWindow(Gtk.ApplicationWindow):
                         messages=[{"role": "user", "content": full_prompt}]
                     )
                     
-                    buffer = self.chat_history.get_buffer()
-                    buffer.insert(buffer.get_end_iter(), f"AI: {responses[0]}\n\n")
+                    # Remove the thinking message and add the response
+                    GLib.idle_add(self.remove_thinking_message)
+                    GLib.idle_add(self.add_message_to_chat, "Assistant", responses[0])
                 
             except Exception as e:
-                error_dialog = Gtk.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    message_type=Gtk.MessageType.ERROR,
-                    buttons=Gtk.ButtonsType.OK,
-                    text=f"Protocol error: {str(e)}"
-                )
-                error_dialog.run()
-                error_dialog.destroy()
+                # Remove the thinking message
+                GLib.idle_add(self.remove_thinking_message)
+                
+                # Show error message
+                error_message = f"Protocol error: {str(e)}"
+                GLib.idle_add(self.add_message_to_chat, "System", error_message)
+                
+                # Show error dialog
+                def show_error_dialog():
+                    error_dialog = Gtk.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        message_type=Gtk.MessageType.ERROR,
+                        buttons=Gtk.ButtonsType.OK,
+                        text=f"Protocol error: {str(e)}"
+                    )
+                    error_dialog.run()
+                    error_dialog.destroy()
+                GLib.idle_add(show_error_dialog)
         
         # Desktop-specific thread handling
         threading.Thread(target=_run, daemon=True).start()
@@ -952,6 +1005,114 @@ class MainWindow(Gtk.ApplicationWindow):
     def is_dark_mode(self):
         settings = Gtk.Settings.get_default()
         return settings.get_property("gtk-application-prefer-dark-theme")
+
+    def add_message_to_chat(self, sender, message, is_thinking=False):
+        """Add a message to the chat display with proper formatting."""
+        # Add to the text buffer first (for backward compatibility)
+        buffer = self.chat_history.get_buffer()
+        if sender == "You":
+            buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
+        elif sender == "Assistant":
+            if isinstance(message, (dict, list)):
+                # Format structured output
+                formatted_message = format_structured_output(message)
+                buffer.insert(buffer.get_end_iter(), f"AI: {formatted_message}\n\n")
+            else:
+                buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
+        else:
+            buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
+            
+        # Store the message for later reference
+        self.chat_messages.append({
+            'sender': sender,
+            'message': message,
+            'is_thinking': is_thinking
+        })
+
+    def remove_thinking_message(self):
+        """Remove the thinking message from the chat."""
+        # Find and remove the last message if it's a thinking message
+        for i in range(len(self.chat_messages) - 1, -1, -1):
+            if self.chat_messages[i].get('is_thinking', False):
+                # Remove from the list
+                self.chat_messages.pop(i)
+                # Remove from the text buffer
+                buffer = self.chat_history.get_buffer()
+                start_iter = buffer.get_start_iter()
+                end_iter = buffer.get_end_iter()
+                buffer.delete(start_iter, end_iter)
+                
+                # Re-add all non-thinking messages to the buffer
+                for msg in self.chat_messages:
+                    if msg['sender'] == "You":
+                        buffer.insert(buffer.get_end_iter(), f"{msg['sender']}: {msg['message']}\n")
+                    elif msg['sender'] == "Assistant":
+                        if isinstance(msg['message'], (dict, list)):
+                            formatted_message = format_structured_output(msg['message'])
+                            buffer.insert(buffer.get_end_iter(), f"AI: {formatted_message}\n\n")
+                        else:
+                            buffer.insert(buffer.get_end_iter(), f"AI: {msg['message']}\n\n")
+                    else:
+                        buffer.insert(buffer.get_end_iter(), f"{msg['sender']}: {msg['message']}\n")
+                break
+        return False  # Return False to stop the idle_add callback
+
+def format_structured_output(output):
+    """Format structured output for display in the chat window."""
+    if isinstance(output, list):
+        # For Minions protocol, messages are a list of jobs
+        result = "Here are the outputs from all the minions:\n\n"
+        
+        # Group jobs by task_id
+        tasks = {}
+        for job in output:
+            task_id = job.manifest.task_id
+            if task_id not in tasks:
+                tasks[task_id] = {"task": job.manifest.task, "jobs": []}
+            tasks[task_id]["jobs"].append(job)
+        
+        for task_id, task_info in tasks.items():
+            # Sort jobs by job_id
+            task_info["jobs"] = sorted(
+                task_info["jobs"], key=lambda x: x.manifest.job_id
+            )
+            
+            # Filter jobs that have relevant information
+            include_jobs = [
+                job
+                for job in task_info["jobs"]
+                if job.output.answer
+                and job.output.answer.lower().strip() != "none"
+            ]
+            
+            result += f"Note: {len(task_info['jobs']) - len(include_jobs)} jobs did not have relevant information.\n\n"
+            result += "Jobs with relevant information:\n\n"
+            
+            # Print all the relevant information
+            for job in include_jobs:
+                result += f"✅ Job {job.manifest.job_id + 1} (Chunk {job.manifest.chunk_id + 1})\n"
+                result += f"Answer: {job.output.answer}\n\n"
+        
+        return result
+    
+    elif isinstance(output, dict):
+        # Try to handle dictionary output (e.g., JSON)
+        if "content" in output and isinstance(output["content"], (dict, str)):
+            try:
+                # Try to parse as JSON if it's a string
+                content = (
+                    output["content"]
+                    if isinstance(output["content"], dict)
+                    else json.loads(output["content"])
+                )
+                return json.dumps(content, indent=2)
+            except json.JSONDecodeError:
+                return str(output["content"])
+        else:
+            return str(output)
+    else:
+        # Regular string output
+        return output
 
 if __name__ == "__main__":
     app = MinionsApp()
