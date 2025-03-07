@@ -7,6 +7,9 @@ import ctypes
 from dotenv import load_dotenv
 load_dotenv(override=True)  # Force reload environment variables from .env file
 
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+
 # Verify API keys are loaded
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -36,9 +39,6 @@ if os.name == 'nt':
 # Debug environment
 os.environ["G_MESSAGES_DEBUG"] = "all"
 os.environ["GTK_DEBUG"] = "interactive"
-
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk, GdkPixbuf
 
 # Import Minions related modules
 from minions.minion import Minion
@@ -83,16 +83,70 @@ def extract_text_from_pdf(pdf_bytes):
         return None
 
 
-def extract_text_from_image(image_bytes):
+def extract_text_from_image(image_bytes, parent_window=None):
     """Extract text from an image file using pytesseract OCR."""
     try:
         import pytesseract
+        from PIL import Image
+        import io
+        import os
+        
+        # Set the path to the Tesseract executable
+        # First check if it's defined in environment variable
+        tesseract_path = os.getenv('TESSERACT_PATH')
+        if not tesseract_path:
+            # Use the default installation path if not specified in environment
+            tesseract_path = r'D:\Program Files\Tesseract-OCR\tesseract.exe'
+        
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
+        
+        # For debugging
+        print(f"Using Tesseract from: {pytesseract.pytesseract.tesseract_cmd}")
+        
+        # Check if the file exists
+        if not os.path.isfile(pytesseract.pytesseract.tesseract_cmd):
+            print(f"WARNING: Tesseract executable not found at {pytesseract.pytesseract.tesseract_cmd}")
+            print("Please install Tesseract OCR or set the correct path in TESSERACT_PATH environment variable")
+            
+            if parent_window:
+                # Show a dialog to help the user
+                dialog = Gtk.MessageDialog(
+                    transient_for=parent_window,
+                    modal=True,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK,
+                    text="Tesseract OCR Not Found"
+                )
+                dialog.format_secondary_text(
+                    f"Tesseract executable not found at {pytesseract.pytesseract.tesseract_cmd}\n\n"
+                    "Please install Tesseract OCR from:\n"
+                    "https://github.com/UB-Mannheim/tesseract/releases\n\n"
+                    "Or set the correct path in your .env file with:\n"
+                    "TESSERACT_PATH=path/to/tesseract.exe"
+                )
+                dialog.run()
+                dialog.destroy()
+                return "Error: Tesseract OCR not found. Please install it first."
+        
         image = Image.open(io.BytesIO(image_bytes))
         text = pytesseract.image_to_string(image)
         return text
     except Exception as e:
         print(f"Error processing image: {str(e)}")
+        if parent_window:
+            # Show error dialog
+            dialog = Gtk.MessageDialog(
+                transient_for=parent_window,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text="OCR Error"
+            )
+            dialog.format_secondary_text(f"Error processing image: {str(e)}")
+            dialog.run()
+            dialog.destroy()
         return None
+
 
 MODEL_MAP = {
     "OpenAI": ["text-davinci-003", "text-curie-001", "text-babbage-001", "text-ada-001"],
@@ -305,7 +359,7 @@ class MinionsApp(Gtk.Application):
         
     def do_activate(self):
         print("Activating application...")
-        window = MainWindow(application=self)
+        window = MainWindow(app=self)
         print("Window created, showing...")
         window.show_all()  # Explicitly show all widgets
         print("Window shown")
@@ -407,10 +461,16 @@ class MinionsApp(Gtk.Application):
             return False, str(e)
 
 class MainWindow(Gtk.ApplicationWindow):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.set_default_size(1200, 800)
-        print("Window initialized with size 1200x800")
+    def __init__(self, app):
+        super().__init__(title="Minions Desktop Client")
+        self.props.application = app
+        self.set_default_size(800, 600)
+        
+        # Initialize chat messages list
+        self.chat_messages = []
+        
+        # Default protocol
+        self.protocol = "Minions"
         
         # Main paned container
         self.main_paned = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
@@ -418,7 +478,6 @@ class MainWindow(Gtk.ApplicationWindow):
         print("Added main paned container")
         
         # Protocol settings
-        self.protocol = "Minions"  # Default to Minions protocol
         self.protocol_options = ["Minion", "Minions"]
         
         # Chat message storage
@@ -509,6 +568,10 @@ class MainWindow(Gtk.ApplicationWindow):
         self.main_paned.add2(self.main_content)
         print("Main content added to paned container")
 
+        # Create the chat interface
+        self.chat_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.main_content.pack_start(self.chat_box, True, True, 0)
+        
         # Chat history
         scrolled = Gtk.ScrolledWindow()
         self.chat_history = Gtk.TextView()
@@ -519,14 +582,15 @@ class MainWindow(Gtk.ApplicationWindow):
         # Input area
         input_box = Gtk.Box(spacing=5)
         self.chat_input = Gtk.Entry()
+        self.chat_input.connect("activate", self.on_send_message)  # Handle Enter key press
         send_btn = Gtk.Button(label="Send")
         send_btn.connect("clicked", self.on_send_message)
 
         input_box.pack_start(self.chat_input, True, True, 0)
         input_box.pack_start(send_btn, False, False, 0)
 
-        self.main_content.pack_start(scrolled, True, True, 0)
-        self.main_content.pack_start(input_box, False, False, 5)
+        self.chat_box.pack_start(scrolled, True, True, 0)
+        self.chat_box.pack_start(input_box, False, False, 5)
         print("Chat components created and packed")
 
     def build_document_section(self):
@@ -666,33 +730,17 @@ class MainWindow(Gtk.ApplicationWindow):
                 error_dialog.destroy()
 
     def on_protocol_changed(self, combo):
-        """Update protocol when selection changes"""
-        app = self.props.application
-        protocol = combo.get_active_text()
-        self.protocol = protocol
+        """Handle protocol selection change."""
+        self.protocol = combo.get_active_text()
+        print(f"Protocol changed to: {self.protocol}")
         
-        # Initialize clients with the new protocol
-        success, message = app.initialize_clients(
-            local_model_name=app.local_model_name,
-            remote_model_name=app.remote_model_name,
-            provider=app.current_provider,
-            protocol=protocol,
-            local_max_tokens=app.local_max_tokens,
-            remote_max_tokens=app.remote_max_tokens,
-            api_key=app.api_key,
-            num_ctx=app.num_ctx
-        )
+        # Update UI based on protocol
+        buffer = self.chat_history.get_buffer()
+        buffer.insert(buffer.get_end_iter(), f"System: Switched to {self.protocol} protocol\n")
         
-        if not success:
-            error_dialog = Gtk.MessageDialog(
-                transient_for=self,
-                modal=True,
-                message_type=Gtk.MessageType.ERROR,
-                buttons=Gtk.ButtonsType.OK,
-                text=f"Failed to initialize protocol: {message}"
-            )
-            error_dialog.run()
-            error_dialog.destroy()
+        # Ensure the chat history scrolls to show the latest message
+        adj = self.chat_history.get_vadjustment()
+        adj.set_value(adj.get_upper() - adj.get_page_size())
 
     def on_local_model_changed(self, entry):
         """Update local model when entry changes"""
@@ -861,7 +909,7 @@ class MainWindow(Gtk.ApplicationWindow):
                     if not text:
                         raise Exception("Failed to extract text from PDF. Make sure PyMuPDF is installed.")
                 elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"]:
-                    text = extract_text_from_image(file_bytes)
+                    text = extract_text_from_image(file_bytes, self)
                     if not text:
                         raise Exception("Failed to extract text from image. Make sure pytesseract is installed.")
                 elif extension in [".txt", ".md", ".py", ".js", ".html", ".css", ".json", ".xml", ".csv", ".yml", ".yaml"]:
@@ -1011,10 +1059,28 @@ class MainWindow(Gtk.ApplicationWindow):
         if sender == "You":
             buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
         elif sender == "Assistant":
-            if isinstance(message, (dict, list)):
-                # Format structured output
-                formatted_message = format_structured_output(message)
-                buffer.insert(buffer.get_end_iter(), f"AI: {formatted_message}\n\n")
+            if is_thinking:
+                # Add a thinking indicator with animation dots
+                buffer.insert(buffer.get_end_iter(), f"AI: Thinking")
+                # Start the thinking animation
+                self.thinking_dots_count = 0
+                GLib.timeout_add(500, self.animate_thinking_dots)
+            elif isinstance(message, (dict, list)) or (isinstance(message, str) and message.strip().startswith('{')):
+                # Format structured output - handle both dict/list and JSON strings
+                try:
+                    # Try to parse as JSON if it's a string
+                    if isinstance(message, str) and message.strip().startswith('{'):
+                        try:
+                            message = json.loads(message)
+                        except json.JSONDecodeError:
+                            pass  # Keep as string if not valid JSON
+                    
+                    # Now format the structured output
+                    formatted_message = format_structured_output(message)
+                    buffer.insert(buffer.get_end_iter(), f"AI: {formatted_message}\n\n")
+                except Exception as e:
+                    print(f"Error formatting structured output: {e}")
+                    buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
             else:
                 buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
         else:
@@ -1057,6 +1123,10 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def remove_thinking_message(self):
         """Remove the thinking message from the chat."""
+        # Stop the animation
+        if hasattr(self, 'thinking_dots_count'):
+            delattr(self, 'thinking_dots_count')
+            
         # Find and remove the last message if it's a thinking message
         for i in range(len(self.chat_messages) - 1, -1, -1):
             if self.chat_messages[i].get('is_thinking', False):
@@ -1068,50 +1138,38 @@ class MainWindow(Gtk.ApplicationWindow):
                 end_iter = buffer.get_end_iter()
                 buffer.delete(start_iter, end_iter)
                 
-                # Re-add all non-thinking messages to the buffer
+                # Redraw all messages except the thinking one
                 for msg in self.chat_messages:
-                    sender = msg['sender']
-                    message = msg['message']
-                    
-                    # Get the current end position before inserting text
-                    start_mark = buffer.create_mark(None, buffer.get_end_iter(), True)
-                    
-                    # Format the message for text buffer display
-                    if sender == "You":
-                        buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
-                    elif sender == "Assistant":
-                        if isinstance(message, (dict, list)):
-                            # Format structured output
-                            formatted_message = format_structured_output(message)
-                            buffer.insert(buffer.get_end_iter(), f"AI: {formatted_message}\n\n")
-                        else:
-                            buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
-                    else:
-                        buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
-                    
-                    # Get the end position after inserting text
-                    end_iter = buffer.get_end_iter()
-                    start_iter = buffer.get_iter_at_mark(start_mark)
-                    
-                    # Add CSS styling for different message types
-                    if sender == "You":
-                        tag = buffer.create_tag(None)
-                        tag.set_property("foreground", "blue")
-                        tag.set_property("weight", 600)
-                        buffer.apply_tag(tag, start_iter, end_iter)
-                    elif sender == "Assistant":
-                        tag = buffer.create_tag(None)
-                        tag.set_property("foreground", "green")
-                        tag.set_property("weight", 600)
-                        buffer.apply_tag(tag, start_iter, end_iter)
-                    else:
-                        tag = buffer.create_tag(None)
-                        tag.set_property("foreground", "red")
-                        tag.set_property("weight", 600)
-                        buffer.apply_tag(tag, start_iter, end_iter)
-                    
-                    # Clean up the mark
-                    buffer.delete_mark(start_mark)
+                    if sender := msg.get('sender'):
+                        message = msg.get('message', '')
+                        is_thinking = msg.get('is_thinking', False)
+                        
+                        # Skip thinking messages
+                        if not is_thinking:
+                            # Format the message for text buffer display
+                            if sender == "You":
+                                buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
+                            elif sender == "Assistant":
+                                if isinstance(message, (dict, list)) or (isinstance(message, str) and message.strip().startswith('{')):
+                                    # Format structured output - handle both dict/list and JSON strings
+                                    try:
+                                        # Try to parse as JSON if it's a string
+                                        if isinstance(message, str) and message.strip().startswith('{'):
+                                            try:
+                                                message = json.loads(message)
+                                            except json.JSONDecodeError:
+                                                pass  # Keep as string if not valid JSON
+                                        
+                                        # Now format the structured output
+                                        formatted_message = format_structured_output(message)
+                                        buffer.insert(buffer.get_end_iter(), f"AI: {formatted_message}\n\n")
+                                    except Exception as e:
+                                        print(f"Error formatting structured output: {e}")
+                                        buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
+                                else:
+                                    buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
+                            else:
+                                buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
                 
                 # Ensure the chat history scrolls to show the latest message
                 adj = self.chat_history.get_vadjustment()
@@ -1119,6 +1177,36 @@ class MainWindow(Gtk.ApplicationWindow):
                 
                 break
         return False  # Return False to stop the idle_add callback
+
+    def animate_thinking_dots(self):
+        """Animate the thinking dots for the AI response."""
+        if not hasattr(self, 'thinking_dots_count'):
+            return False
+            
+        # Find the last message if it's a thinking message
+        for i in range(len(self.chat_messages) - 1, -1, -1):
+            if self.chat_messages[i].get('is_thinking', False):
+                buffer = self.chat_history.get_buffer()
+                
+                # Get the end position of the buffer
+                end_iter = buffer.get_end_iter()
+                
+                # Delete any existing dots
+                line_start = buffer.get_iter_at_line(buffer.get_line_count() - 1)
+                buffer.delete(line_start, end_iter)
+                
+                # Add new dots based on the counter
+                dots = "." * ((self.thinking_dots_count % 3) + 1)
+                buffer.insert(buffer.get_end_iter(), f"Thinking{dots}")
+                
+                # Increment the counter
+                self.thinking_dots_count += 1
+                
+                # Continue the animation
+                return True
+                
+        # If we didn't find a thinking message, stop the animation
+        return False
 
 def format_structured_output(output):
     """Format structured output for display in the chat window."""
@@ -1163,12 +1251,12 @@ def format_structured_output(output):
         return result
     
     elif isinstance(output, dict):
-        # Handle structured output from OllamaClient
+        # Handle structured output from OllamaClient or direct JSON
         if "answer" in output:
             result = f"{output['answer']}\n\n"
             
             if "explanation" in output and output["explanation"]:
-                result += f"Explanation: {output['explanation']}\n\n"
+                result += f"{output['explanation']}\n\n"
                 
             if "citation" in output and output["citation"]:
                 result += f"Citation: {output['citation']}\n\n"
@@ -1183,12 +1271,59 @@ def format_structured_output(output):
                     if isinstance(output["content"], dict)
                     else json.loads(output["content"])
                 )
-                return json.dumps(content, indent=2)
+                
+                # Check if content has answer and explanation
+                if isinstance(content, dict) and "answer" in content:
+                    result = f"{content['answer']}\n\n"
+                    
+                    if "explanation" in content and content["explanation"]:
+                        result += f"{content['explanation']}\n\n"
+                        
+                    if "citation" in content and content["citation"]:
+                        result += f"Citation: {content['citation']}\n\n"
+                    
+                    return result
+                else:
+                    return json.dumps(content, indent=2)
             except json.JSONDecodeError:
                 return str(output["content"])
         else:
+            # Try to parse the entire output as a JSON string
+            try:
+                if isinstance(output, str):
+                    parsed = json.loads(output)
+                    if isinstance(parsed, dict) and "answer" in parsed:
+                        result = f"{parsed['answer']}\n\n"
+                        
+                        if "explanation" in parsed and parsed["explanation"]:
+                            result += f"{parsed['explanation']}\n\n"
+                            
+                        if "citation" in parsed and parsed["citation"]:
+                            result += f"Citation: {parsed['citation']}\n\n"
+                        
+                        return result
+            except (json.JSONDecodeError, TypeError):
+                pass
+                
             return str(output)
     else:
+        # Try to parse as JSON string
+        try:
+            if isinstance(output, str):
+                parsed = json.loads(output)
+                if isinstance(parsed, dict) and "answer" in parsed:
+                    result = f"{parsed['answer']}\n\n"
+                    
+                    if "explanation" in parsed and parsed["explanation"]:
+                        result += f"{parsed['explanation']}\n\n"
+                        
+                    if "citation" in parsed and parsed["citation"]:
+                        result += f"Citation: {parsed['citation']}\n\n"
+                    
+                    return result
+        except (json.JSONDecodeError, TypeError):
+            pass
+            
         # Regular string output
         return output
 

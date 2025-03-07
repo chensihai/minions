@@ -13,4 +13,5 @@ st-theme
 mcp
 spacy
 ollama
+tesseract
 # Optionally, add perplexity if needed

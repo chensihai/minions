@@ -19,7 +19,8 @@ setup(
         "st-theme",
         "mcp",
         "spacy",
-        "ollama"
+        "ollama",
+        "tesseract",
     ],
     entry_points={
         "console_scripts": [
