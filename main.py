@@ -1,6 +1,19 @@
-import gi
+import platform
 import os
 import sys
+
+# Disable MLX on non-macOS platforms
+if platform.system() != "Darwin":
+    # Create a dummy mlx_lm module to prevent import errors
+    class DummyModule:
+        def __getattr__(self, name):
+            return None
+    
+    sys.modules['mlx_lm'] = DummyModule()
+    os.environ['DISABLE_MLX'] = '1'
+    print("MLX LM disabled (not supported on this platform)")
+
+import gi
 import threading
 import json
 import ctypes
@@ -67,6 +80,7 @@ from pydantic import BaseModel
 import fitz  # PyMuPDF for PDF processing
 from PIL import Image
 import io
+
 
 # Document processing functions
 def extract_text_from_pdf(pdf_bytes):

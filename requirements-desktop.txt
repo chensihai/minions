@@ -1,17 +1,23 @@
 # requirements-desktop.txt
 # Desktop Application Requirements for Minions
 pygobject==3.50.0
-requests==2.31.0
+requests==2.32.3
 python-dotenv==1.0.1
 pydantic==2.10.6
 openai
 anthropic
 together
 tiktoken
+groq
 Pillow
 st-theme
 mcp
 spacy
 ollama
 tesseract
+rank_bm25
+fitz
+frontend
+tools
+setuptools
 # Optionally, add perplexity if needed
