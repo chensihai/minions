@@ -689,7 +689,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self.chat_messages = []
         
         # Default protocol
-        self.protocol = "Minions"
+        self.protocol = "Minion"
         
         # Main paned container
         self.main_paned = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
@@ -742,14 +742,27 @@ class MainWindow(Gtk.ApplicationWindow):
         self.protocol_combo = Gtk.ComboBoxText()
         for protocol in self.protocol_options:
             self.protocol_combo.append_text(protocol)
-        self.protocol_combo.set_active(1)  # Default to Minions
+        self.protocol_combo.set_active(0)  # Default to Minion
+        self.protocol = "Minion"  # Initialize protocol variable
         self.protocol_combo.connect("changed", self.on_protocol_changed)
         
         # MCP Server selection
-        mcp_server_label = Gtk.Label(label="MCP Server:")
+        self.mcp_server_label = Gtk.Label(label="MCP Server:")
         self.mcp_server_combo = Gtk.ComboBoxText()
         self.update_mcp_servers()
         self.mcp_server_combo.connect("changed", self.on_mcp_server_changed)
+        
+        # Set initial visibility of MCP server controls (hidden by default)
+        mcp_server_visible = self.protocol == "Minions-MCP"
+        self.mcp_server_combo.set_visible(mcp_server_visible)
+        self.mcp_server_label.set_visible(mcp_server_visible)
+        self.mcp_server_combo.set_no_show_all(not mcp_server_visible)
+        self.mcp_server_label.set_no_show_all(not mcp_server_visible)
+        
+        # Force UI update to properly hide widgets if needed
+        if not mcp_server_visible:
+            self.mcp_server_combo.hide()
+            self.mcp_server_label.hide()
         
         # Privacy Mode toggle
         privacy_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
@@ -789,7 +802,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self.sidebar.pack_start(self.model_combo, False, False, 0)
         self.sidebar.pack_start(protocol_label, False, False, 0)
         self.sidebar.pack_start(self.protocol_combo, False, False, 0)
-        self.sidebar.pack_start(mcp_server_label, False, False, 0)
+        self.sidebar.pack_start(self.mcp_server_label, False, False, 0)
         self.sidebar.pack_start(self.mcp_server_combo, False, False, 0)
         self.sidebar.pack_start(privacy_box, False, False, 0)
         self.sidebar.pack_start(local_model_label, False, False, 0)
@@ -846,6 +859,255 @@ class MainWindow(Gtk.ApplicationWindow):
         self.sidebar.pack_start(Gtk.Separator(), False, False, 5)
         self.sidebar.pack_start(scrolled, True, True, 0)
         print("Document section created and packed")
+
+    def setup_branding(self):
+        print("Setting up branding...")
+        display = self.get_display()
+        scale_factor = display.get_monitor(0).get_scale_factor()
+        dark_mode = self.is_dark_mode()
+
+        image_path = os.path.abspath(
+            "assets/minions_logo_no_background.png" if dark_mode 
+            else "assets/minions_logo_light.png"
+        )
+        print(f"Loading logo from: {image_path}")
+
+        try:
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file(image_path)
+            scaled_pixbuf = pixbuf.scale_simple(
+                int(200 * scale_factor),
+                int((pixbuf.get_height() * 200 / pixbuf.get_width()) * scale_factor),
+                GdkPixbuf.InterpType.HYPER
+            )
+            logo = Gtk.Image.new_from_pixbuf(scaled_pixbuf)
+            
+            branding_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            branding_box.set_halign(Gtk.Align.CENTER)
+            branding_box.pack_start(logo, False, False, 0)
+            self.main_content.pack_start(branding_box, False, False, 0)
+            print("Logo loaded and added successfully")
+
+        except Exception as e:
+            print(f"Error loading logo: {str(e)}")
+            error_label = Gtk.Label(label=f"Error loading logo: {str(e)}")
+            self.main_content.pack_start(error_label, False, False, 0)
+
+    def is_dark_mode(self):
+        settings = Gtk.Settings.get_default()
+        return settings.get_property("gtk-application-prefer-dark-theme")
+
+    def add_message_to_chat(self, sender, message, is_thinking=False):
+        """Add a message to the chat display with proper formatting."""
+        # Add to the text buffer first (for backward compatibility)
+        buffer = self.chat_history.get_buffer()
+        
+        # Get the current end position before inserting text
+        start_mark = buffer.create_mark(None, buffer.get_end_iter(), True)
+        
+        # Format the message for text buffer display
+        if sender == "You":
+            buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
+        elif sender == "Assistant":
+            if is_thinking:
+                # Add a thinking indicator with animation dots
+                buffer.insert(buffer.get_end_iter(), f"AI: Thinking")
+                # Start the thinking animation
+                self.thinking_dots_count = 0
+                GLib.timeout_add(500, self.animate_thinking_dots)
+            elif isinstance(message, (dict, list)) or (isinstance(message, str) and message.strip().startswith('{')):
+                # Format structured output - handle both dict/list and JSON strings
+                try:
+                    # Try to parse as JSON if it's a string
+                    if isinstance(message, str) and message.strip().startswith('{'):
+                        try:
+                            message = json.loads(message)
+                        except json.JSONDecodeError:
+                            pass  # Keep as string if not valid JSON
+                    
+                    # Now format the structured output
+                    formatted_message = format_structured_output(message)
+                    buffer.insert(buffer.get_end_iter(), f"AI: {formatted_message}\n\n")
+                except Exception as e:
+                    print(f"Error formatting structured output: {e}")
+                    buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
+            else:
+                buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
+        else:
+            buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
+        
+        # Get the end position after inserting text
+        end_iter = buffer.get_end_iter()
+        start_iter = buffer.get_iter_at_mark(start_mark)
+        
+        # Add CSS styling for different message types
+        if sender == "You":
+            tag = buffer.create_tag(None)
+            tag.set_property("foreground", "blue")
+            tag.set_property("weight", 600)
+            buffer.apply_tag(tag, start_iter, end_iter)
+        elif sender == "Assistant":
+            tag = buffer.create_tag(None)
+            tag.set_property("foreground", "green")
+            tag.set_property("weight", 600)
+            buffer.apply_tag(tag, start_iter, end_iter)
+        else:
+            tag = buffer.create_tag(None)
+            tag.set_property("foreground", "red")
+            tag.set_property("weight", 600)
+            buffer.apply_tag(tag, start_iter, end_iter)
+        
+        # Clean up the mark
+        buffer.delete_mark(start_mark)
+            
+        # Store the message for later reference
+        self.chat_messages.append({
+            'sender': sender,
+            'message': message,
+            'is_thinking': is_thinking
+        })
+        
+        # Ensure the chat history scrolls to show the latest message
+        adj = self.chat_history.get_vadjustment()
+        adj.set_value(adj.get_upper() - adj.get_page_size())
+
+    def remove_thinking_message(self):
+        """Remove the thinking message from the chat."""
+        # Stop the animation
+        if hasattr(self, 'thinking_dots_count'):
+            delattr(self, 'thinking_dots_count')
+            
+        # Find and remove the last message if it's a thinking message
+        for i in range(len(self.chat_messages) - 1, -1, -1):
+            if self.chat_messages[i].get('is_thinking', False):
+                # Remove from the list
+                self.chat_messages.pop(i)
+                # Remove from the text buffer
+                buffer = self.chat_history.get_buffer()
+                start_iter = buffer.get_start_iter()
+                end_iter = buffer.get_end_iter()
+                buffer.delete(start_iter, end_iter)
+                
+                # Redraw all messages except the thinking one
+                for msg in self.chat_messages:
+                    if sender := msg.get('sender'):
+                        message = msg.get('message', '')
+                        is_thinking = msg.get('is_thinking', False)
+                        
+                        # Skip thinking messages
+                        if not is_thinking:
+                            # Format the message for text buffer display
+                            if sender == "You":
+                                buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
+                            elif sender == "Assistant":
+                                if isinstance(message, (dict, list)) or (isinstance(message, str) and message.strip().startswith('{')):
+                                    # Format structured output - handle both dict/list and JSON strings
+                                    try:
+                                        # Try to parse as JSON if it's a string
+                                        if isinstance(message, str) and message.strip().startswith('{'):
+                                            try:
+                                                message = json.loads(message)
+                                            except json.JSONDecodeError:
+                                                pass  # Keep as string if not valid JSON
+                    
+                                        # Now format the structured output
+                                        formatted_message = format_structured_output(message)
+                                        buffer.insert(buffer.get_end_iter(), f"AI: {formatted_message}\n\n")
+                                    except Exception as e:
+                                        print(f"Error formatting structured output: {e}")
+                                        buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
+                                else:
+                                    buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
+                            else:
+                                buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
+                
+                # Ensure the chat history scrolls to show the latest message
+                adj = self.chat_history.get_vadjustment()
+                adj.set_value(adj.get_upper() - adj.get_page_size())
+
+        return False  # Return False to stop the idle_add callback
+
+    def animate_thinking_dots(self):
+        """Animate the thinking dots for the AI response."""
+        if not hasattr(self, 'thinking_dots_count'):
+            return False
+            
+        # Find the last message if it's a thinking message
+        for i in range(len(self.chat_messages) - 1, -1, -1):
+            if self.chat_messages[i].get('is_thinking', False):
+                buffer = self.chat_history.get_buffer()
+                
+                # Get the end position of the buffer
+                end_iter = buffer.get_end_iter()
+                
+                # Delete any existing dots
+                line_start = buffer.get_iter_at_line(buffer.get_line_count() - 1)
+                buffer.delete(line_start, end_iter)
+                
+                # Add new dots based on the counter
+                dots = "." * ((self.thinking_dots_count % 3) + 1)
+                buffer.insert(buffer.get_end_iter(), f"Thinking{dots}")
+                
+                # Increment the counter
+                self.thinking_dots_count += 1
+                
+                # Continue the animation
+                return True
+                
+        # If we didn't find a thinking message, stop the animation
+        return False
+
+    def on_mcp_server_changed(self, combo):
+        app = self.props.application
+        server_name = combo.get_active_text()
+        app.mcp_server_name = server_name
+        
+        # Reinitialize clients with the new MCP server
+        try:
+            success, message = app.initialize_clients(
+                local_model_name=app.local_model_name,
+                remote_model_name=app.remote_model_name,
+                provider=app.current_provider,
+                protocol=self.protocol,
+                local_max_tokens=app.local_max_tokens,
+                remote_max_tokens=app.remote_max_tokens,
+                api_key=app.api_key,
+                num_ctx=app.num_ctx,
+                mcp_server_name=server_name
+            )
+            
+            if not success:
+                warning_dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    message_type=Gtk.MessageType.WARNING,
+                    buttons=Gtk.ButtonsType.OK,
+                    text=f"Note: {message}\n\nYou may need to enter a valid API key."
+                )
+                warning_dialog.run()
+                warning_dialog.destroy()
+        except Exception as e:
+            # Handle any exceptions during client initialization
+            error_dialog = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text=f"Error initializing clients: {str(e)}"
+            )
+            error_dialog.run()
+            error_dialog.destroy()
+
+    def on_privacy_toggled(self, switch, gparam):
+        app = self.props.application
+        app.privacy_mode = switch.get_active()
+        
+        # Update UI based on privacy mode
+        buffer = self.chat_history.get_buffer()
+        buffer.insert(buffer.get_end_iter(), f"System: Switched to {'Private' if app.privacy_mode else 'Public'} mode\n")
+        
+        # Ensure the chat history scrolls to show the latest message
+        adj = self.chat_history.get_vadjustment()
+        adj.set_value(adj.get_upper() - adj.get_page_size())
 
     def on_provider_changed(self, combo):
         app = self.props.application
@@ -992,7 +1254,17 @@ class MainWindow(Gtk.ApplicationWindow):
         # Show/hide MCP server selection based on protocol
         mcp_server_visible = (self.protocol == "Minions-MCP")
         self.mcp_server_combo.set_visible(mcp_server_visible)
-        self.sidebar.get_children()[self.sidebar.get_children().index(self.mcp_server_combo) - 1].set_visible(mcp_server_visible)
+        self.mcp_server_label.set_visible(mcp_server_visible)
+        self.mcp_server_combo.set_no_show_all(not mcp_server_visible)
+        self.mcp_server_label.set_no_show_all(not mcp_server_visible)
+        
+        # Force UI update to properly show/hide widgets
+        if mcp_server_visible:
+            self.mcp_server_combo.show_all()
+            self.mcp_server_label.show_all()
+        else:
+            self.mcp_server_combo.hide()
+            self.mcp_server_label.hide()
         
         # Update UI based on protocol
         buffer = self.chat_history.get_buffer()
@@ -1001,6 +1273,43 @@ class MainWindow(Gtk.ApplicationWindow):
         # Ensure the chat history scrolls to show the latest message
         adj = self.chat_history.get_vadjustment()
         adj.set_value(adj.get_upper() - adj.get_page_size())
+        
+        # Reinitialize clients with the new protocol
+        app = self.props.application
+        try:
+            success, message = app.initialize_clients(
+                local_model_name=app.local_model_name,
+                remote_model_name=app.remote_model_name,
+                provider=app.current_provider,
+                protocol=self.protocol,
+                local_max_tokens=app.local_max_tokens,
+                remote_max_tokens=app.remote_max_tokens,
+                api_key=app.api_key,
+                num_ctx=app.num_ctx,
+                mcp_server_name=app.mcp_server_name if self.protocol == "Minions-MCP" else None
+            )
+            
+            if not success:
+                warning_dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    message_type=Gtk.MessageType.WARNING,
+                    buttons=Gtk.ButtonsType.OK,
+                    text=f"Note: {message}\n\nYou may need to enter a valid API key."
+                )
+                warning_dialog.run()
+                warning_dialog.destroy()
+        except Exception as e:
+            # Handle any exceptions during client initialization
+            error_dialog = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text=f"Error initializing clients: {str(e)}"
+            )
+            error_dialog.run()
+            error_dialog.destroy()
 
     def on_local_model_changed(self, entry):
         """Update local model when entry changes"""
@@ -1064,7 +1373,8 @@ class MainWindow(Gtk.ApplicationWindow):
                         task=task,
                         doc_metadata=doc_metadata,
                         context=[doc_context] if doc_context else None,
-                        max_rounds=5
+                        max_rounds=5,
+                        is_privacy=app.privacy_mode
                     )
                     
                     # Remove the thinking message and add the response
@@ -1077,7 +1387,8 @@ class MainWindow(Gtk.ApplicationWindow):
                         task=task,
                         doc_metadata=doc_metadata,
                         context=[doc_context] if doc_context else None,
-                        max_rounds=5
+                        max_rounds=5,
+                        is_privacy=app.privacy_mode
                     )
                     
                     # Remove the thinking message and add the response
@@ -1277,262 +1588,13 @@ class MainWindow(Gtk.ApplicationWindow):
     def format_file_size(self, size_bytes):
         """Format file size in human-readable format"""
         if size_bytes < 1024:
-            return f"{size_bytes} B"
+            return f"{size_bytes} bytes"
         elif size_bytes < 1024 * 1024:
             return f"{size_bytes / 1024:.1f} KB"
         elif size_bytes < 1024 * 1024 * 1024:
             return f"{size_bytes / (1024 * 1024):.1f} MB"
         else:
             return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
-                
-    def setup_branding(self):
-        print("Setting up branding...")
-        display = self.get_display()
-        scale_factor = display.get_monitor(0).get_scale_factor()
-        dark_mode = self.is_dark_mode()
-
-        image_path = os.path.abspath(
-            "assets/minions_logo_no_background.png" if dark_mode 
-            else "assets/minions_logo_light.png"
-        )
-        print(f"Loading logo from: {image_path}")
-
-        try:
-            pixbuf = GdkPixbuf.Pixbuf.new_from_file(image_path)
-            scaled_pixbuf = pixbuf.scale_simple(
-                int(200 * scale_factor),
-                int((pixbuf.get_height() * 200 / pixbuf.get_width()) * scale_factor),
-                GdkPixbuf.InterpType.HYPER
-            )
-            logo = Gtk.Image.new_from_pixbuf(scaled_pixbuf)
-            
-            branding_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-            branding_box.set_halign(Gtk.Align.CENTER)
-            branding_box.pack_start(logo, False, False, 0)
-            self.main_content.pack_start(branding_box, False, False, 0)
-            print("Logo loaded and added successfully")
-
-        except Exception as e:
-            print(f"Error loading logo: {str(e)}")
-            error_label = Gtk.Label(label=f"Error loading logo: {str(e)}")
-            self.main_content.pack_start(error_label, False, False, 0)
-
-    def is_dark_mode(self):
-        settings = Gtk.Settings.get_default()
-        return settings.get_property("gtk-application-prefer-dark-theme")
-
-    def add_message_to_chat(self, sender, message, is_thinking=False):
-        """Add a message to the chat display with proper formatting."""
-        # Add to the text buffer first (for backward compatibility)
-        buffer = self.chat_history.get_buffer()
-        
-        # Get the current end position before inserting text
-        start_mark = buffer.create_mark(None, buffer.get_end_iter(), True)
-        
-        # Format the message for text buffer display
-        if sender == "You":
-            buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
-        elif sender == "Assistant":
-            if is_thinking:
-                # Add a thinking indicator with animation dots
-                buffer.insert(buffer.get_end_iter(), f"AI: Thinking")
-                # Start the thinking animation
-                self.thinking_dots_count = 0
-                GLib.timeout_add(500, self.animate_thinking_dots)
-            elif isinstance(message, (dict, list)) or (isinstance(message, str) and message.strip().startswith('{')):
-                # Format structured output - handle both dict/list and JSON strings
-                try:
-                    # Try to parse as JSON if it's a string
-                    if isinstance(message, str) and message.strip().startswith('{'):
-                        try:
-                            message = json.loads(message)
-                        except json.JSONDecodeError:
-                            pass  # Keep as string if not valid JSON
-                    
-                    # Now format the structured output
-                    formatted_message = format_structured_output(message)
-                    buffer.insert(buffer.get_end_iter(), f"AI: {formatted_message}\n\n")
-                except Exception as e:
-                    print(f"Error formatting structured output: {e}")
-                    buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
-            else:
-                buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
-        else:
-            buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
-        
-        # Get the end position after inserting text
-        end_iter = buffer.get_end_iter()
-        start_iter = buffer.get_iter_at_mark(start_mark)
-        
-        # Add CSS styling for different message types
-        if sender == "You":
-            tag = buffer.create_tag(None)
-            tag.set_property("foreground", "blue")
-            tag.set_property("weight", 600)
-            buffer.apply_tag(tag, start_iter, end_iter)
-        elif sender == "Assistant":
-            tag = buffer.create_tag(None)
-            tag.set_property("foreground", "green")
-            tag.set_property("weight", 600)
-            buffer.apply_tag(tag, start_iter, end_iter)
-        else:
-            tag = buffer.create_tag(None)
-            tag.set_property("foreground", "red")
-            tag.set_property("weight", 600)
-            buffer.apply_tag(tag, start_iter, end_iter)
-        
-        # Clean up the mark
-        buffer.delete_mark(start_mark)
-            
-        # Store the message for later reference
-        self.chat_messages.append({
-            'sender': sender,
-            'message': message,
-            'is_thinking': is_thinking
-        })
-        
-        # Ensure the chat history scrolls to show the latest message
-        adj = self.chat_history.get_vadjustment()
-        adj.set_value(adj.get_upper() - adj.get_page_size())
-
-    def remove_thinking_message(self):
-        """Remove the thinking message from the chat."""
-        # Stop the animation
-        if hasattr(self, 'thinking_dots_count'):
-            delattr(self, 'thinking_dots_count')
-            
-        # Find and remove the last message if it's a thinking message
-        for i in range(len(self.chat_messages) - 1, -1, -1):
-            if self.chat_messages[i].get('is_thinking', False):
-                # Remove from the list
-                self.chat_messages.pop(i)
-                # Remove from the text buffer
-                buffer = self.chat_history.get_buffer()
-                start_iter = buffer.get_start_iter()
-                end_iter = buffer.get_end_iter()
-                buffer.delete(start_iter, end_iter)
-                
-                # Redraw all messages except the thinking one
-                for msg in self.chat_messages:
-                    if sender := msg.get('sender'):
-                        message = msg.get('message', '')
-                        is_thinking = msg.get('is_thinking', False)
-                        
-                        # Skip thinking messages
-                        if not is_thinking:
-                            # Format the message for text buffer display
-                            if sender == "You":
-                                buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
-                            elif sender == "Assistant":
-                                if isinstance(message, (dict, list)) or (isinstance(message, str) and message.strip().startswith('{')):
-                                    # Format structured output - handle both dict/list and JSON strings
-                                    try:
-                                        # Try to parse as JSON if it's a string
-                                        if isinstance(message, str) and message.strip().startswith('{'):
-                                            try:
-                                                message = json.loads(message)
-                                            except json.JSONDecodeError:
-                                                pass  # Keep as string if not valid JSON
-                                        
-                                        # Now format the structured output
-                                        formatted_message = format_structured_output(message)
-                                        buffer.insert(buffer.get_end_iter(), f"AI: {formatted_message}\n\n")
-                                    except Exception as e:
-                                        print(f"Error formatting structured output: {e}")
-                                        buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
-                                else:
-                                    buffer.insert(buffer.get_end_iter(), f"AI: {message}\n\n")
-                            else:
-                                buffer.insert(buffer.get_end_iter(), f"{sender}: {message}\n")
-                
-                # Ensure the chat history scrolls to show the latest message
-                adj = self.chat_history.get_vadjustment()
-                adj.set_value(adj.get_upper() - adj.get_page_size())
-
-        return False  # Return False to stop the idle_add callback
-
-    def animate_thinking_dots(self):
-        """Animate the thinking dots for the AI response."""
-        if not hasattr(self, 'thinking_dots_count'):
-            return False
-            
-        # Find the last message if it's a thinking message
-        for i in range(len(self.chat_messages) - 1, -1, -1):
-            if self.chat_messages[i].get('is_thinking', False):
-                buffer = self.chat_history.get_buffer()
-                
-                # Get the end position of the buffer
-                end_iter = buffer.get_end_iter()
-                
-                # Delete any existing dots
-                line_start = buffer.get_iter_at_line(buffer.get_line_count() - 1)
-                buffer.delete(line_start, end_iter)
-                
-                # Add new dots based on the counter
-                dots = "." * ((self.thinking_dots_count % 3) + 1)
-                buffer.insert(buffer.get_end_iter(), f"Thinking{dots}")
-                
-                # Increment the counter
-                self.thinking_dots_count += 1
-                
-                # Continue the animation
-                return True
-                
-        # If we didn't find a thinking message, stop the animation
-        return False
-
-    def on_mcp_server_changed(self, combo):
-        app = self.props.application
-        server_name = combo.get_active_text()
-        app.mcp_server_name = server_name
-        
-        # Reinitialize clients with the new MCP server
-        try:
-            success, message = app.initialize_clients(
-                local_model_name=app.local_model_name,
-                remote_model_name=app.remote_model_name,
-                provider=app.current_provider,
-                protocol=self.protocol,
-                local_max_tokens=app.local_max_tokens,
-                remote_max_tokens=app.remote_max_tokens,
-                api_key=app.api_key,
-                num_ctx=app.num_ctx,
-                mcp_server_name=server_name
-            )
-            
-            if not success:
-                warning_dialog = Gtk.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    message_type=Gtk.MessageType.WARNING,
-                    buttons=Gtk.ButtonsType.OK,
-                    text=f"Note: {message}\n\nYou may need to enter a valid API key."
-                )
-                warning_dialog.run()
-                warning_dialog.destroy()
-        except Exception as e:
-            # Handle any exceptions during client initialization
-            error_dialog = Gtk.MessageDialog(
-                transient_for=self,
-                modal=True,
-                message_type=Gtk.MessageType.ERROR,
-                buttons=Gtk.ButtonsType.OK,
-                text=f"Error initializing clients: {str(e)}"
-            )
-            error_dialog.run()
-            error_dialog.destroy()
-
-    def on_privacy_toggled(self, switch, gparam):
-        app = self.props.application
-        app.privacy_mode = switch.get_active()
-        
-        # Update UI based on privacy mode
-        buffer = self.chat_history.get_buffer()
-        buffer.insert(buffer.get_end_iter(), f"System: Switched to {'Private' if app.privacy_mode else 'Public'} mode\n")
-        
-        # Ensure the chat history scrolls to show the latest message
-        adj = self.chat_history.get_vadjustment()
-        adj.set_value(adj.get_upper() - adj.get_page_size())
 
 def format_structured_output(output):
     """Format structured output for display in the chat window."""
