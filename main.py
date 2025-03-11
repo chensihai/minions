@@ -81,6 +81,7 @@ from openai import OpenAI
 from PIL import Image
 import io
 from pydantic import BaseModel
+from typing import List, Optional, Dict
 
 # Import additional libraries for document processing
 import fitz  # PyMuPDF for PDF processing
@@ -466,6 +467,13 @@ class MinionsApp(Gtk.Application):
         self.uploaded_docs = []
         self.doc_metadata = {}
         
+        # MCP settings
+        self.mcp_config_manager = MCPConfigManager()
+        self.mcp_server_name = None
+        
+        # Privacy mode
+        self.privacy_mode = False
+        
     def do_activate(self):
         print("Activating application...")
         window = MainWindow(app=self)
@@ -477,16 +485,16 @@ class MinionsApp(Gtk.Application):
                           local_max_tokens, remote_max_tokens, api_key, num_ctx=4096, mcp_server_name=None):
         """Initialize the local and remote clients for the Minions protocol."""
         try:
-            # Always initialize local client if possible
+            # Initialize local client (Ollama)
             try:
-                # Use the Pydantic model for structured output schema
+                # Define structured output schema for Ollama client
                 structured_output_schema = StructuredOutputSchema if protocol == "Minions" else None
                 
                 self.local_client = OllamaClient(
                     model_name=local_model_name,
                     temperature=float(self.local_temperature),
                     max_tokens=int(local_max_tokens),
-                    num_ctx=int(num_ctx),
+                    num_ctx=num_ctx,
                     structured_output_schema=structured_output_schema,
                     use_async=False  # Desktop client uses synchronous calls
                 )
@@ -496,8 +504,7 @@ class MinionsApp(Gtk.Application):
                 self.local_client = None
             
             # Initialize remote client based on provider
-            self.remote_client = None
-            if api_key:  # Only try to initialize if API key is provided
+            if api_key:
                 try:
                     if provider == "OpenAI":
                         self.remote_client = OpenAIClient(
@@ -582,10 +589,95 @@ class MinionsApp(Gtk.Application):
                     return True, "Initialized Minions protocol with remote client only (local client not available)"
                 else:
                     return False, "No clients available for Minions protocol"
+            elif protocol == "Minions-MCP":
+                if self.local_client and self.remote_client and mcp_server_name:
+                    self.minions = SyncMinionsMCP(
+                        local_client=self.local_client,
+                        remote_client=self.remote_client,
+                        mcp_server_name=mcp_server_name
+                    )
+                    print(f"Initialized Minions-MCP protocol with both clients and server {mcp_server_name}")
+                    return True, f"Initialized Minions-MCP protocol with both clients and server {mcp_server_name}"
+                else:
+                    return False, "Missing clients or MCP server name for Minions-MCP protocol"
             else:
                 return False, f"Unknown protocol: {protocol}"
         except Exception as e:
             return False, str(e)
+
+class MCPServerConfig:
+    """Configuration for an MCP server"""
+    
+    def __init__(self, command: str, args: List[str], env: Optional[Dict[str, str]] = None):
+        """Initialize MCP server configuration
+        
+        Args:
+            command: Command to run the MCP server
+            args: Arguments to pass to the command
+            env: Environment variables to set when running the command
+        """
+        self.command = command
+        self.args = args
+        self.env = env or {}
+
+class MCPConfigManager:
+    """Manages MCP server configurations"""
+
+    def __init__(self, config_path: Optional[str] = None):
+        """Initialize MCP config manager
+
+        Args:
+            config_path: Path to MCP config file. If None, will look in default locations
+        """
+        self.config_path = config_path
+        self.servers: Dict[str, MCPServerConfig] = {}
+        self._load_config()
+
+    def _load_config(self):
+        """Load MCP configuration from file"""
+        paths_to_try = [
+            self.config_path,
+            os.path.join(os.getcwd(), "mcp.json"),
+            os.path.join(os.getcwd(), ".mcp.json"),
+            os.path.expanduser("~/.mcp.json"),
+        ]
+
+        config_file = None
+        for path in paths_to_try:
+            if path and os.path.exists(path):
+                config_file = path
+                break
+
+        if not config_file:
+            return
+
+        try:
+            with open(config_file, "r") as f:
+                config = json.load(f)
+
+            if "mcpServers" in config:
+                for server_name, server_config in config["mcpServers"].items():
+                    self.servers[server_name] = MCPServerConfig(
+                        command=server_config["command"],
+                        args=server_config["args"],
+                        env=server_config.get("env"),
+                    )
+        except Exception as e:
+            raise ValueError(f"Failed to load MCP config from {config_file}: {str(e)}")
+
+    def get_server_config(self, server_name: str) -> MCPServerConfig:
+        """Get configuration for a specific MCP server"""
+        if server_name not in self.servers:
+            raise ValueError(f"MCP server '{server_name}' not found in config")
+        return self.servers[server_name]
+
+    def list_servers(self) -> list[str]:
+        """Get list of configured server names"""
+        return list(self.servers.keys())
+    
+    def get_servers(self) -> list[str]:
+        """Get list of configured server names (alias for list_servers)"""
+        return self.list_servers()
 
 class MainWindow(Gtk.ApplicationWindow):
     def __init__(self, app):
@@ -605,7 +697,7 @@ class MainWindow(Gtk.ApplicationWindow):
         print("Added main paned container")
         
         # Protocol settings
-        self.protocol_options = ["Minion", "Minions"]
+        self.protocol_options = ["Minion", "Minions", "Minions-MCP"]
         
         # Chat message storage
         self.chat_messages = []
@@ -653,6 +745,21 @@ class MainWindow(Gtk.ApplicationWindow):
         self.protocol_combo.set_active(1)  # Default to Minions
         self.protocol_combo.connect("changed", self.on_protocol_changed)
         
+        # MCP Server selection
+        mcp_server_label = Gtk.Label(label="MCP Server:")
+        self.mcp_server_combo = Gtk.ComboBoxText()
+        self.update_mcp_servers()
+        self.mcp_server_combo.connect("changed", self.on_mcp_server_changed)
+        
+        # Privacy Mode toggle
+        privacy_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        privacy_label = Gtk.Label(label="Privacy Mode:")
+        self.privacy_switch = Gtk.Switch()
+        self.privacy_switch.set_active(False)
+        self.privacy_switch.connect("notify::active", self.on_privacy_toggled)
+        privacy_box.pack_start(privacy_label, False, False, 0)
+        privacy_box.pack_start(self.privacy_switch, False, False, 0)
+        
         # Local model settings
         local_model_label = Gtk.Label(label="Local Model:")
         self.local_model_entry = Gtk.Entry()
@@ -682,12 +789,21 @@ class MainWindow(Gtk.ApplicationWindow):
         self.sidebar.pack_start(self.model_combo, False, False, 0)
         self.sidebar.pack_start(protocol_label, False, False, 0)
         self.sidebar.pack_start(self.protocol_combo, False, False, 0)
+        self.sidebar.pack_start(mcp_server_label, False, False, 0)
+        self.sidebar.pack_start(self.mcp_server_combo, False, False, 0)
+        self.sidebar.pack_start(privacy_box, False, False, 0)
         self.sidebar.pack_start(local_model_label, False, False, 0)
         self.sidebar.pack_start(self.local_model_entry, False, False, 0)
         self.sidebar.pack_start(temp_box, False, False, 0)
         self.sidebar.pack_start(upload_btn, False, False, 5)
         self.build_document_section()
         print("Sidebar components created and packed")
+
+    def update_mcp_servers(self):
+        self.mcp_server_combo.remove_all()
+        for server in self.props.application.mcp_config_manager.get_servers():
+            self.mcp_server_combo.append_text(server)
+        self.mcp_server_combo.set_active(0)
 
     def build_main_content(self):
         print("Building main content...")
@@ -873,6 +989,11 @@ class MainWindow(Gtk.ApplicationWindow):
         self.protocol = combo.get_active_text()
         print(f"Protocol changed to: {self.protocol}")
         
+        # Show/hide MCP server selection based on protocol
+        mcp_server_visible = (self.protocol == "Minions-MCP")
+        self.mcp_server_combo.set_visible(mcp_server_visible)
+        self.sidebar.get_children()[self.sidebar.get_children().index(self.mcp_server_combo) - 1].set_visible(mcp_server_visible)
+        
         # Update UI based on protocol
         buffer = self.chat_history.get_buffer()
         buffer.insert(buffer.get_end_iter(), f"System: Switched to {self.protocol} protocol\n")
@@ -950,13 +1071,27 @@ class MainWindow(Gtk.ApplicationWindow):
                     GLib.idle_add(self.remove_thinking_message)
                     GLib.idle_add(self.add_message_to_chat, "Assistant", output)
                 
+                elif self.protocol == "Minions-MCP" and app.minions and app.remote_client:
+                    # Use Minions-MCP protocol with both clients
+                    output = app.minions(
+                        task=task,
+                        doc_metadata=doc_metadata,
+                        context=[doc_context] if doc_context else None,
+                        max_rounds=5
+                    )
+                    
+                    # Remove the thinking message and add the response
+                    GLib.idle_add(self.remove_thinking_message)
+                    GLib.idle_add(self.add_message_to_chat, "Assistant", output)
+                
                 elif self.protocol == "Minion" and app.minion:
                     # Use Minion protocol
                     output = app.minion(
                         task=task,
                         doc_metadata=doc_metadata,
                         context=[doc_context] if doc_context else None,
-                        max_rounds=5
+                        max_rounds=5,
+                        is_privacy=app.privacy_mode
                     )
                     
                     # Remove the thinking message and add the response
@@ -1313,8 +1448,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 # Ensure the chat history scrolls to show the latest message
                 adj = self.chat_history.get_vadjustment()
                 adj.set_value(adj.get_upper() - adj.get_page_size())
-                
-                break
+
         return False  # Return False to stop the idle_add callback
 
     def animate_thinking_dots(self):
@@ -1346,6 +1480,59 @@ class MainWindow(Gtk.ApplicationWindow):
                 
         # If we didn't find a thinking message, stop the animation
         return False
+
+    def on_mcp_server_changed(self, combo):
+        app = self.props.application
+        server_name = combo.get_active_text()
+        app.mcp_server_name = server_name
+        
+        # Reinitialize clients with the new MCP server
+        try:
+            success, message = app.initialize_clients(
+                local_model_name=app.local_model_name,
+                remote_model_name=app.remote_model_name,
+                provider=app.current_provider,
+                protocol=self.protocol,
+                local_max_tokens=app.local_max_tokens,
+                remote_max_tokens=app.remote_max_tokens,
+                api_key=app.api_key,
+                num_ctx=app.num_ctx,
+                mcp_server_name=server_name
+            )
+            
+            if not success:
+                warning_dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    message_type=Gtk.MessageType.WARNING,
+                    buttons=Gtk.ButtonsType.OK,
+                    text=f"Note: {message}\n\nYou may need to enter a valid API key."
+                )
+                warning_dialog.run()
+                warning_dialog.destroy()
+        except Exception as e:
+            # Handle any exceptions during client initialization
+            error_dialog = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text=f"Error initializing clients: {str(e)}"
+            )
+            error_dialog.run()
+            error_dialog.destroy()
+
+    def on_privacy_toggled(self, switch, gparam):
+        app = self.props.application
+        app.privacy_mode = switch.get_active()
+        
+        # Update UI based on privacy mode
+        buffer = self.chat_history.get_buffer()
+        buffer.insert(buffer.get_end_iter(), f"System: Switched to {'Private' if app.privacy_mode else 'Public'} mode\n")
+        
+        # Ensure the chat history scrolls to show the latest message
+        adj = self.chat_history.get_vadjustment()
+        adj.set_value(adj.get_upper() - adj.get_page_size())
 
 def format_structured_output(output):
     """Format structured output for display in the chat window."""
@@ -1405,26 +1592,17 @@ def format_structured_output(output):
         elif "content" in output and isinstance(output["content"], (dict, str)):
             try:
                 # Try to parse as JSON if it's a string
-                content = (
-                    output["content"]
-                    if isinstance(output["content"], dict)
-                    else json.loads(output["content"])
-                )
-                
-                # Check if content has answer and explanation
-                if isinstance(content, dict) and "answer" in content:
-                    result = f"{content['answer']}\n\n"
+                if isinstance(output["content"], str) and output["content"].strip().startswith('{'):
+                    try:
+                        output["content"] = json.loads(output["content"])
+                    except json.JSONDecodeError:
+                        pass  # Keep as string if not valid JSON
                     
-                    if "explanation" in content and content["explanation"]:
-                        result += f"{content['explanation']}\n\n"
-                        
-                    if "citation" in content and content["citation"]:
-                        result += f"Citation: {content['citation']}\n\n"
-                    
-                    return result
-                else:
-                    return json.dumps(content, indent=2)
-            except json.JSONDecodeError:
+                # Now format the structured output
+                formatted_message = format_structured_output(output["content"])
+                return formatted_message
+            except Exception as e:
+                print(f"Error formatting structured output: {e}")
                 return str(output["content"])
         else:
             # Try to parse the entire output as a JSON string
