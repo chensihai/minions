@@ -29,6 +29,9 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
 # Print verification (remove in production)
 print(f"OpenAI API Key loaded: {'Yes' if OPENAI_API_KEY else 'No'}")
@@ -36,6 +39,9 @@ print(f"Anthropic API Key loaded: {'Yes' if ANTHROPIC_API_KEY else 'No'}")
 print(f"Together API Key loaded: {'Yes' if TOGETHER_API_KEY else 'No'}")
 print(f"Perplexity API Key loaded: {'Yes' if PERPLEXITY_API_KEY else 'No'}")
 print(f"OpenRouter API Key loaded: {'Yes' if OPENROUTER_API_KEY else 'No'}")
+print(f"Azure OpenAI API Key loaded: {'Yes' if AZURE_OPENAI_API_KEY else 'No'}")
+print(f"Groq API Key loaded: {'Yes' if GROQ_API_KEY else 'No'}")
+print(f"DeepSeek API Key loaded: {'Yes' if DEEPSEEK_API_KEY else 'No'}")
 
 # Windows-specific configuration
 if os.name == 'nt':
@@ -65,9 +71,9 @@ from minions.clients.anthropic import AnthropicClient
 from minions.clients.perplexity import PerplexityAIClient
 from minions.clients.openrouter import OpenRouterClient
 from minions.clients.together import TogetherClient
-
-
-
+from minions.clients.azure_openai import AzureOpenAIClient
+from minions.clients.groq import GroqClient
+from minions.clients.deepseek import DeepSeekClient
 
 # Additional imports
 import time
@@ -80,7 +86,6 @@ from pydantic import BaseModel
 import fitz  # PyMuPDF for PDF processing
 from PIL import Image
 import io
-
 
 # Document processing functions
 def extract_text_from_pdf(pdf_bytes):
@@ -167,7 +172,10 @@ MODEL_MAP = {
     "Anthropic": ["anthropic-cassius-001", "anthropic-cassius-002"],
     "Together": ["together-gpt-001", "together-gpt-002"],
     "Perplexity": ["perplexity-gpt-001", "perplexity-gpt-002"],
-    "OpenRouter": ["openrouter-gpt-001", "openrouter-gpt-002"]
+    "OpenRouter": ["openrouter-gpt-001", "openrouter-gpt-002"],
+    "AzureOpenAI": ["text-davinci-003", "text-curie-001", "text-babbage-001", "text-ada-001"],
+    "Groq": ["groq-gpt-001", "groq-gpt-002"],
+    "DeepSeek": ["deepseek-gpt-001", "deepseek-gpt-002"]
 }
 
 # OpenAI model pricing per 1M tokens
@@ -179,10 +187,13 @@ OPENAI_PRICES = {
 
 PROVIDER_TO_ENV_VAR_KEY = {
     "OpenAI": "OPENAI_API_KEY",
+    "AzureOpenAI": "AZURE_OPENAI_API_KEY",
     "OpenRouter": "OPENROUTER_API_KEY",
     "Anthropic": "ANTHROPIC_API_KEY",
     "Together": "TOGETHER_API_KEY",
     "Perplexity": "PERPLEXITY_API_KEY",
+    "Groq": "GROQ_API_KEY",
+    "DeepSeek": "DEEPSEEK_API_KEY",
 }
 
 # API Key validation functions
@@ -325,6 +336,90 @@ def validate_openrouter_key(api_key):
     except Exception as e:
         return False, str(e)
 
+
+def validate_azure_openai_key(api_key):
+    """Validate Azure OpenAI API key by making a minimal API call"""
+    try:
+        # First check if the API key is empty
+        if not api_key:
+            return False, "API key is empty"
+            
+        client = AzureOpenAIClient(
+            model_name="text-davinci-003",
+            api_key=api_key,
+            max_tokens=1
+        )
+        messages = [{"role": "user", "content": "Say yes"}]
+        
+        # Catch authentication errors specifically
+        try:
+            client.chat(messages)
+            return True, ""
+        except Exception as e:
+            if "401" in str(e) or "invalid_api_key" in str(e) or "Invalid API key" in str(e):
+                return False, "Invalid API key. Please check your Azure OpenAI API key."
+            else:
+                raise e
+                
+    except Exception as e:
+        return False, str(e)
+
+
+def validate_groq_key(api_key):
+    """Validate Groq API key by making a minimal API call"""
+    try:
+        # First check if the API key is empty
+        if not api_key:
+            return False, "API key is empty"
+            
+        client = GroqClient(
+            model_name="groq-gpt-001",
+            api_key=api_key,
+            max_tokens=1
+        )
+        messages = [{"role": "user", "content": "Say yes"}]
+        
+        # Catch authentication errors specifically
+        try:
+            client.chat(messages)
+            return True, ""
+        except Exception as e:
+            if "401" in str(e) or "invalid_api_key" in str(e) or "Invalid API key" in str(e):
+                return False, "Invalid API key. Please check your Groq API key."
+            else:
+                raise e
+                
+    except Exception as e:
+        return False, str(e)
+
+
+def validate_deepseek_key(api_key):
+    """Validate DeepSeek API key by making a minimal API call"""
+    try:
+        # First check if the API key is empty
+        if not api_key:
+            return False, "API key is empty"
+            
+        client = DeepSeekClient(
+            model_name="deepseek-gpt-001",
+            api_key=api_key,
+            max_tokens=1
+        )
+        messages = [{"role": "user", "content": "Say yes"}]
+        
+        # Catch authentication errors specifically
+        try:
+            client.chat(messages)
+            return True, ""
+        except Exception as e:
+            if "401" in str(e) or "invalid_api_key" in str(e) or "Invalid API key" in str(e):
+                return False, "Invalid API key. Please check your DeepSeek API key."
+            else:
+                raise e
+                
+    except Exception as e:
+        return False, str(e)
+
 # For Minions protocol
 class JobOutput(BaseModel):
     answer: str | None
@@ -349,7 +444,7 @@ class MinionsApp(Gtk.Application):
         self.num_ctx = 4096  # Default matching web client
         
         # Provider-related settings
-        self.providers = ["OpenAI", "Anthropic", "Together", "Perplexity", "OpenRouter"]
+        self.providers = ["OpenAI", "Anthropic", "Together", "Perplexity", "OpenRouter", "AzureOpenAI", "Groq", "DeepSeek"]
         self.current_provider = "OpenAI"
         self.api_key = OPENAI_API_KEY
         
@@ -431,6 +526,24 @@ class MinionsApp(Gtk.Application):
                         )
                     elif provider == "OpenRouter":
                         self.remote_client = OpenRouterClient(
+                            model_name=remote_model_name,
+                            api_key=api_key,
+                            max_tokens=int(remote_max_tokens)
+                        )
+                    elif provider == "AzureOpenAI":
+                        self.remote_client = AzureOpenAIClient(
+                            model_name=remote_model_name,
+                            api_key=api_key,
+                            max_tokens=int(remote_max_tokens)
+                        )
+                    elif provider == "Groq":
+                        self.remote_client = GroqClient(
+                            model_name=remote_model_name,
+                            api_key=api_key,
+                            max_tokens=int(remote_max_tokens)
+                        )
+                    elif provider == "DeepSeek":
+                        self.remote_client = DeepSeekClient(
                             model_name=remote_model_name,
                             api_key=api_key,
                             max_tokens=int(remote_max_tokens)
@@ -634,6 +747,12 @@ class MainWindow(Gtk.ApplicationWindow):
             app.api_key = PERPLEXITY_API_KEY
         elif provider == "OpenRouter":
             app.api_key = OPENROUTER_API_KEY
+        elif provider == "AzureOpenAI":
+            app.api_key = AZURE_OPENAI_API_KEY
+        elif provider == "Groq":
+            app.api_key = GROQ_API_KEY
+        elif provider == "DeepSeek":
+            app.api_key = DEEPSEEK_API_KEY
             
         # Update the API key entry field with the value from environment
         if app.api_key:
@@ -720,6 +839,12 @@ class MainWindow(Gtk.ApplicationWindow):
                 is_valid, message = validate_perplexity_key(api_key)
             elif provider == "OpenRouter":
                 is_valid, message = validate_openrouter_key(api_key)
+            elif provider == "AzureOpenAI":
+                is_valid, message = validate_azure_openai_key(api_key)
+            elif provider == "Groq":
+                is_valid, message = validate_groq_key(api_key)
+            elif provider == "DeepSeek":
+                is_valid, message = validate_deepseek_key(api_key)
             
             # Show validation result to the user
             if is_valid:

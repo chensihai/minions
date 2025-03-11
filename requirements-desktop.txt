@@ -20,4 +20,6 @@ fitz
 frontend
 tools
 setuptools
+# cartesia_mlx
+# mlx-lm
 # Optionally, add perplexity if needed
