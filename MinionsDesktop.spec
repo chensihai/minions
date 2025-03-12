@@ -5,7 +5,13 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('static', 'static'), ('assets', 'assets')],
+    datas=[
+        ('static', 'static'), 
+        ('assets', 'assets'),
+        # Add explicit entries for the logo files
+        ('assets/minions_logo_light.png', 'assets'),
+        ('assets/minions_logo_no_background.png', 'assets')
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,4 +41,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    onefile=True,
 )

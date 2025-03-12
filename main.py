@@ -866,13 +866,41 @@ class MainWindow(Gtk.ApplicationWindow):
         scale_factor = display.get_monitor(0).get_scale_factor()
         dark_mode = self.is_dark_mode()
 
-        image_path = os.path.abspath(
-            "assets/minions_logo_no_background.png" if dark_mode 
-            else "assets/minions_logo_light.png"
-        )
-        print(f"Loading logo from: {image_path}")
-
+        # Get the base path for resources
+        if getattr(sys, 'frozen', False):
+            # Running as compiled executable
+            base_path = os.path.dirname(sys.executable)
+            # Try multiple possible locations for the assets
+            possible_paths = [
+                os.path.join(base_path, "assets"),
+                os.path.join(base_path, "dist", "assets"),
+                os.path.join(os.path.dirname(base_path), "assets")
+            ]
+            
+            # Find the first path that exists and contains the logo
+            image_name = "minions_logo_no_background.png" if dark_mode else "minions_logo_light.png"
+            image_path = None
+            
+            for path in possible_paths:
+                test_path = os.path.join(path, image_name)
+                print(f"Trying path: {test_path}")
+                if os.path.exists(test_path):
+                    image_path = test_path
+                    break
+            
+            # If no path found, fallback to default
+            if not image_path:
+                image_path = os.path.join(base_path, "assets", image_name)
+                print(f"Fallback to: {image_path}")
+        else:
+            # Running in development environment
+            base_path = os.path.dirname(os.path.abspath(__file__))
+            image_name = "minions_logo_no_background.png" if dark_mode else "minions_logo_light.png"
+            image_path = os.path.join(base_path, "assets", image_name)
+        
+        # Construct the image path
         try:
+            print(f"Loading logo from: {image_path}")
             pixbuf = GdkPixbuf.Pixbuf.new_from_file(image_path)
             scaled_pixbuf = pixbuf.scale_simple(
                 int(200 * scale_factor),

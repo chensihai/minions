@@ -7,6 +7,14 @@
                 "@modelcontextprotocol/server-filesystem",
                 "/Users/avanikanarayan/Downloads/"
             ]
+        },
+        "local": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "@modelcontextprotocol/server-local",
+                "/Users/avanikanarayan/Downloads/"
+            ]
         }
     }
 }
