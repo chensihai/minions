@@ -54,7 +54,9 @@ API_PRICES = {
     "OpenAI": {
         "gpt-4o": {"input": 2.50, "cached_input": 1.25, "output": 10.00},
         "gpt-4o-mini": {"input": 0.15, "cached_input": 0.075, "output": 0.60},
+        "gpt-4.5-preview": {"input": 75.00, "cached_input": 37.50, "output": 150.00},
         "o3-mini": {"input": 1.10, "cached_input": 0.55, "output": 4.40},
+        "o1-pro": {"input": 15.00, "cached_input": 7.50, "output": 60.00},
     },
     # DeepSeek model pricing per 1M tokens
     "DeepSeek": {
@@ -399,11 +401,18 @@ def initialize_clients(
             )
 
     if provider == "OpenAI":
+        # Add web search tool if responses API is enabled
+        tools = None
+        if use_responses_api:
+            tools = [{"type": "web_search_preview"}]
+
         st.session_state.remote_client = OpenAIClient(
             model_name=remote_model_name,
             temperature=remote_temperature,
             max_tokens=int(remote_max_tokens),
             api_key=api_key,
+            use_responses_api=use_responses_api,
+            tools=tools,
         )
     elif provider == "AzureOpenAI":
         # Get Azure-specific parameters from environment variables
@@ -790,6 +799,16 @@ with st.sidebar:
         )
         provider_key = None
 
+    # Add a toggle for OpenAI Responses API with web search when OpenAI is selected
+    if selected_provider == "OpenAI":
+        use_responses_api = st.toggle(
+            "Enable Responses API",
+            value=False,
+            help="When enabled, uses OpenAI's Responses API with web search capability. Only works with OpenAI provider.",
+        )
+    else:
+        use_responses_api = False
+
     # Local model provider selection
     st.subheader("Local Model Provider")
     local_provider_options = ["Ollama"]
@@ -908,7 +927,18 @@ with st.sidebar:
                 "Llamba-1B-4bit": "cartesia-ai/Llamba-1B-4bit-mlx",
                 "Llamba-3B-4bit": "cartesia-ai/Llamba-3B-4bit-mlx",
             }
-        else:  # Ollama
+        else:  # Ollama            # Get available Ollama models
+            available_ollama_models = OllamaClient.get_available_models()
+
+            # Default recommended models list
+            recommended_models = [
+                "llama3.2",
+                "llama3.1:8b",
+                "qwen2.5:3b",
+                "qwen2.5:7b"
+            ]
+
+            # Initialize with default model options
             local_model_options = {
                 "llama3.2 (Recommended)": "llama3.2",
                 "llama3.1:8b (Recommended)": "llama3.1:8b",
@@ -924,6 +954,18 @@ with st.sidebar:
                 "deepseek-r1:7b": "deepseek-r1:7b",
                 "deepseek-r1:8b": "deepseek-r1:8b",
             }
+
+            # Add any additional available models from Ollama that aren't in the default list
+            if available_ollama_models:
+                for model in available_ollama_models:
+                    model_key = model
+                    if model in recommended_models:
+                        # If it's a recommended model but not in defaults, add with (Recommended)
+                        if model not in local_model_options.values():
+                            model_key = f"{model} (Recommended)"
+                    # Add the model if it's not already in the options
+                    if model not in local_model_options.values():
+                        local_model_options[model_key] = model
 
         local_model_display = st.selectbox(
             "Model", options=list(local_model_options.keys()), index=0
@@ -1055,6 +1097,7 @@ with st.sidebar:
         else:
             remote_temperature = 0.0
             remote_max_tokens = 4096
+
 
 # -------------------------
 #   Main app layout
